@@ -13,6 +13,7 @@ import { dispatchCampaignBatch } from "@/lib/campaign-dispatch";
 import { trackedDirectHtml } from "@/lib/tracking";
 
 const val = (form: FormData, key: string) => String(form.get(key) || "").trim();
+const selectedIds=(form:FormData)=>[...new Set(form.getAll("ids").map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))].slice(0,100);
 const clean = (html: string) => sanitizeHtml(html, { allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]), allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, a: ["href", "target", "rel"], img: ["src", "alt"] }, allowedSchemes: ["https", "http", "mailto"] });
 
 export async function loginAction(form: FormData) {
@@ -180,7 +181,12 @@ export async function bulkConversations(form:FormData){
   if(!["read","unread","delete"].includes(action))throw new Error("Invalid conversation action");
   if(!ids.length)redirect("/conversations");
   for(const id of ids){const c=(await rows("SELECT co.mailbox_id,(SELECT m.direction FROM messages m WHERE m.conversation_id=co.id ORDER BY m.id DESC LIMIT 1) last_direction FROM conversations co WHERE co.id=?",[id]))[0];if(!c||(user.role!=="admin"&&Number(user.assigned_mailbox_id)!==Number(c.mailbox_id)))continue;
-    if(action==="delete"){await run("DELETE FROM messages WHERE conversation_id=?",[id]);await run("DELETE FROM conversations WHERE id=?",[id])}
+    if(action==="delete"){
+      await run("DELETE FROM email_events WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?)",[id]);
+      await run("DELETE FROM send_attempts WHERE conversation_id=?",[id]);
+      await run("DELETE FROM messages WHERE conversation_id=?",[id]);
+      await run("DELETE FROM conversations WHERE id=?",[id]);
+    }
     else if(c.last_direction==="inbound"){await run("UPDATE messages SET status=? WHERE conversation_id=? AND direction='inbound'",[action==="unread"?"received":"read",id]);await run("UPDATE conversations SET unread=? WHERE id=?",[action==="unread"?1:0,id])}
   }
   revalidatePath("/conversations");revalidatePath("/dashboard");redirect("/conversations");
@@ -188,5 +194,31 @@ export async function bulkConversations(form:FormData){
 
 export async function deleteUser(form:FormData){const admin=await requireAdmin(),id=Number(val(form,"id"));if(id===Number(admin.id))throw new Error("You cannot delete your own account");await run("DELETE FROM users WHERE id=?",[id]);revalidatePath("/users");redirect("/users")}
 export async function deleteMailbox(form:FormData){await requireAdmin();const id=Number(val(form,"id"));const used=(await rows("SELECT (SELECT COUNT(*) FROM conversations WHERE mailbox_id=?) + (SELECT COUNT(*) FROM campaigns WHERE mailbox_id=?) + (SELECT COUNT(*) FROM users WHERE assigned_mailbox_id=?) AS n",[id,id,id]))[0];if(Number(used.n))throw new Error("This mailbox is in use; deactivate it instead");await run("DELETE FROM mailboxes WHERE id=?",[id]);revalidatePath("/email-accounts");redirect("/email-accounts")}
+
+export async function bulkDeleteUsers(form:FormData){
+  const admin=await requireAdmin(),ids=selectedIds(form);
+  if(!ids.length)redirect("/users");
+  await run(`DELETE FROM users WHERE id IN (${ids.map(()=>"?").join(",")}) AND id<>?`,[...ids,Number(admin.id)]);
+  revalidatePath("/users");redirect(ids.includes(Number(admin.id))?"/users?bulk_notice=self_skipped":"/users");
+}
+
+export async function bulkDeleteMailboxes(form:FormData){
+  await requireAdmin();const ids=selectedIds(form);
+  if(!ids.length)redirect("/email-accounts");
+  const selected=ids.map(()=>"?").join(",");
+  const used=await rows(`SELECT id FROM mailboxes m WHERE m.id IN (${selected}) AND (EXISTS (SELECT 1 FROM conversations c WHERE c.mailbox_id=m.id) OR EXISTS (SELECT 1 FROM campaigns ca WHERE ca.mailbox_id=m.id) OR EXISTS (SELECT 1 FROM users u WHERE u.assigned_mailbox_id=m.id))`,ids);
+  const blocked=new Set(used.map(item=>Number(item.id))),deletable=ids.filter(id=>!blocked.has(id));
+  if(deletable.length)await run(`DELETE FROM mailboxes WHERE id IN (${deletable.map(()=>"?").join(",")})`,deletable);
+  revalidatePath("/email-accounts");redirect(blocked.size?"/email-accounts?bulk_notice=in_use":"/email-accounts");
+}
+
+export async function bulkDeleteContacts(form:FormData){
+  await requireAdmin();const ids=selectedIds(form);
+  if(!ids.length)redirect("/contacts");
+  const used=await rows(`SELECT id FROM contacts ct WHERE ct.id IN (${ids.map(()=>"?").join(",")}) AND (EXISTS (SELECT 1 FROM conversations co WHERE co.contact_id=ct.id) OR EXISTS (SELECT 1 FROM campaign_recipients cr WHERE cr.contact_id=ct.id))`,ids);
+  const blocked=new Set(used.map(item=>Number(item.id))),deletable=ids.filter(id=>!blocked.has(id));
+  if(deletable.length)await run(`DELETE FROM contacts WHERE id IN (${deletable.map(()=>"?").join(",")})`,deletable);
+  revalidatePath("/contacts");redirect(blocked.size?"/contacts?bulk_notice=in_use":"/contacts");
+}
 
 export async function updateProfile(form:FormData){const user=await requireUser(),name=val(form,"name"),email=val(form,"email"),phone=val(form,"phone"),password=val(form,"password");if(!name)throw new Error("Name is required");await run("UPDATE users SET name=?,email=?,phone=? WHERE id=?",[name,email,phone,Number(user.id)]);if(password){await run("UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?",[await hash(password,12),Number(user.id)]);await logout()}revalidatePath("/profile");redirect(password?"/login":"/profile")}

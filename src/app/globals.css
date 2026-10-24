@@ -70,6 +70,8 @@
   .stat-value { @apply mb-1 text-[28px] font-extrabold tracking-[-1px]; }
   .stat-card strong { @apply text-[13px]; }
   .stat-card small { @apply mt-1 text-xs text-subtle; }
+  .campaign-dashboard { @apply mb-5; }
+  .campaign-dashboard-stats { @apply px-5 pt-5; }
   .two-col { @apply grid grid-cols-[minmax(0,1.8fr)_minmax(290px,1fr)] gap-5; }
   .right-stack { @apply grid content-start gap-5; }
   .card { @apply min-w-0 overflow-hidden rounded-2xl border border-line bg-white shadow-[0_3px_12px_#14234a06]; }
@@ -142,6 +144,9 @@
   .bulk-toolbar { @apply flex items-center gap-2 border-b border-line bg-[#fafbff] px-5 py-2.5; }
   .bulk-toolbar span { @apply flex-1 text-xs text-subtle; }
   .bulk-toolbar .button { @apply min-h-8 px-3 py-1.5; }
+  .bulk-toolbar .select-all { @apply flex items-center gap-2 text-xs font-semibold text-[#47536b]; }
+  .bulk-toolbar .select-all input, .bulk-row-check { @apply h-4 min-h-0 w-4 shrink-0; }
+  .bulk-toolbar button:disabled { @apply cursor-not-allowed opacity-40; }
   .conversation-row .row-check { @apply h-4 min-h-4 w-4 shrink-0; }
 
   .campaign-hero { @apply mb-5 flex items-center justify-between p-6; }
@@ -150,7 +155,6 @@
   .activity-row { @apply grid gap-1.5 border-b border-line px-[22px] py-4 text-[13px]; }
   .activity-row small { @apply text-subtle; }
   .badge-line { @apply mt-1 flex flex-wrap gap-1; }
-  .bulk-toolbar button:disabled { @apply cursor-not-allowed opacity-40; }
   .email-preview { @apply overflow-auto p-5 text-[13px] leading-relaxed; }
   .health-row { @apply mx-5 flex gap-5 border-t border-line py-4 text-xs text-subtle; }
   .thread-layout { @apply grid grid-cols-[minmax(0,1fr)_265px] gap-5; }
