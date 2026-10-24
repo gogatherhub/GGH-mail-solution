@@ -133,11 +133,18 @@ export async function sendConversation(form: FormData) {
     if(String(existing.contact_email).toLowerCase()!==to)throw new Error("Reply recipient does not match this conversation");
   } else { const created = await run("INSERT INTO conversations (mailbox_id,contact_id,subject) VALUES (?,?,?)", [mailboxId, Number(contactId), subject]); conversationId = Number(created.lastInsertRowid); }
   const message = await run("INSERT INTO messages (conversation_id,direction,sender,recipient,cc,bcc,subject,body_html) VALUES (?,?,?,?,?,?,?,?)", [conversationId, "outbound", String(mailbox.email), to, val(form, "cc"), val(form, "bcc"), subject, body]);
+  let providerId: string | undefined;
   try {
-    const providerId = await sendMail({ from: String(mailbox.email), to, cc: val(form, "cc"), bcc: val(form, "bcc"), subject, html: body,attachments });
-    await run("UPDATE messages SET status='sent',provider_id=? WHERE id=?", [providerId, Number(message.lastInsertRowid)]);
-    await run("UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP,unread=0 WHERE id=?", [conversationId]);
-  } catch (error) { await run("UPDATE messages SET status='failed' WHERE id=?", [Number(message.lastInsertRowid)]); throw error; }
+    providerId = await sendMail({ from: String(mailbox.email), to, cc: val(form, "cc"), bcc: val(form, "bcc"), subject, html: body,attachments });
+  } catch (error) {
+    console.error("Email provider send failed:", error instanceof Error ? error.name : "UNKNOWN");
+    await run("UPDATE messages SET status='failed' WHERE id=?", [Number(message.lastInsertRowid)]);
+    revalidatePath("/conversations");
+    const reason=String(mailbox.email).toLowerCase().endsWith("@gmail.com")?"gmail_sender":"provider";
+    redirect(`/conversations/${conversationId}?send_error=${reason}`);
+  }
+  await run("UPDATE messages SET status='sent',provider_id=? WHERE id=?", [providerId, Number(message.lastInsertRowid)]);
+  await run("UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP,unread=0 WHERE id=?", [conversationId]);
   revalidatePath("/conversations"); redirect(`/conversations/${conversationId}`);
 }
 
