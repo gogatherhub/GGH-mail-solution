@@ -34,6 +34,7 @@ SMTP alone does not deliver bounce and complaint events into this app. The Resen
 
 1. Provision MySQL 8+ and create an empty `welfog` database. Obtain its host, port, database name, username, password, and any required TLS settings from the database provider.
 2. Set `DEMO_MODE=false` and `DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/welfog` in `.env.local` or your hosting environment. URL-encode special characters in the password. Keep `SESSION_SECRET` and `TRACKING_SECRET` stable.
+   For an Aiven MySQL Service URI, reveal and copy the real password and keep `?ssl-mode=REQUIRED` at the end. The app maps that option to MySQL TLS. For verified TLS, download the project CA certificate from Aiven, set its PEM contents as `MYSQL_CA_CERT`, and use `ssl-mode=VERIFY_IDENTITY` in the URL. Never use the literal `CLICK_TO_REVEAL_PASSWORD` placeholder.
 3. Restart the app. It creates the MySQL tables and the initial admin account from `ADMIN_USERNAME` and `ADMIN_PASSWORD`. Use a strong password of at least 12 characters in production.
 
 The local demo database is separate from MySQL. Data entered in demo mode does not migrate automatically.

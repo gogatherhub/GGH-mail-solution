@@ -15,7 +15,12 @@ const clean = (html: string) => sanitizeHtml(html, { allowedTags: sanitizeHtml.d
 
 export async function loginAction(form: FormData) {
   let valid=false;
-  try{valid=await authenticate(val(form, "username"), val(form, "password"))}catch{redirect("/login?unavailable=1")}
+  try{valid=await authenticate(val(form, "username"), val(form, "password"))}catch(error){
+    const issue=error as {code?:unknown;message?:unknown};
+    const safeMessage=typeof issue.message==="string"&&(/^(DATABASE_URL|Set MYSQL_CA_CERT)/).test(issue.message)?issue.message:undefined;
+    console.error("Login database error:",typeof issue.code==="string"?issue.code:safeMessage||"UNKNOWN");
+    redirect("/login?unavailable=1")
+  }
   if (!valid) redirect("/login?error=1");
   redirect("/dashboard");
 }

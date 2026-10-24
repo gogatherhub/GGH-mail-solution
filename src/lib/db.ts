@@ -1,6 +1,7 @@
 import mysql, { type Pool, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import { hash } from "bcryptjs";
 import { demoRows, demoRun } from "./demo-db";
+import { mysqlConfigFromUrl } from "./mysql-config";
 
 let pool: Pool | undefined;
 let ready: Promise<Pool> | undefined;
@@ -11,7 +12,7 @@ export const isDemo = process.env.DEMO_MODE === "true";
 
 async function initialize() {
   if (!process.env.DATABASE_URL) throw new Error("Set DATABASE_URL to a MySQL connection URL");
-  pool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 10, waitForConnections: true, decimalNumbers: true });
+  pool = mysql.createPool(mysqlConfigFromUrl(process.env.DATABASE_URL));
   const statements = [
     `CREATE TABLE IF NOT EXISTS mailboxes (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, email VARCHAR(255) NOT NULL UNIQUE, display_name VARCHAR(255) NOT NULL, type VARCHAR(40) DEFAULT 'General', quota_mb INT DEFAULT 5120, catch_all TINYINT(1) DEFAULT 0, status VARCHAR(20) DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS users (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, username VARCHAR(100) NOT NULL UNIQUE, password_hash VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL, email VARCHAR(255), phone VARCHAR(50), department VARCHAR(120), job_role VARCHAR(100) DEFAULT 'Employee', role VARCHAR(20) NOT NULL DEFAULT 'employee', assigned_mailbox_id BIGINT UNSIGNED, session_version INT NOT NULL DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
