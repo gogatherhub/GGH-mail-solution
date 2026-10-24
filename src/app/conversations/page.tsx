@@ -6,15 +6,19 @@ import { bulkConversations } from "@/app/actions";
 
 export default async function Conversations({searchParams}:{searchParams:Promise<{q?:string;filter?:string;mailbox?:string;status?:string;time?:string;sort?:string;page?:string}>}){
   const user=await requireUser(),p=await searchParams,q=(p.q||"").trim().slice(0,120),filter=["unread","sent"].includes(p.filter||"")?p.filter!:"",sort=p.sort==="oldest"?"ASC":"DESC",page=Math.max(1,Math.min(100000,Number(p.page)||1)),mailbox=Number(p.mailbox)||0,status=["read","unread"].includes(p.status||"")?p.status!:"",time=["today","week","month"].includes(p.time||"")?p.time!:"",size=15;
-  const mailboxes=await rows("SELECT id,email FROM mailboxes"+(user.role==="admin"?"":" WHERE id=?"),user.role==="admin"?[]:[Number(user.assigned_mailbox_id)||-1]);
   const clauses=["(?='' OR c.subject LIKE ? OR ct.name LIKE ? OR ct.email LIKE ? OR EXISTS (SELECT 1 FROM messages sx WHERE sx.conversation_id=c.id AND sx.body_html LIKE ?))"];const args:(string|number)[]=[q,`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`];
   if(user.role!=="admin"){clauses.push("c.mailbox_id=?");args.push(Number(user.assigned_mailbox_id)||-1)} else if(mailbox){clauses.push("c.mailbox_id=?");args.push(mailbox)}
   if(filter==="unread")clauses.push("c.unread=1");
   if(filter==="sent")clauses.push("EXISTS (SELECT 1 FROM messages sm WHERE sm.conversation_id=c.id AND sm.direction='outbound')");
   if(status)clauses.push(`c.unread=${status==="unread"?1:0}`);
   if(time){const days=time==="today"?0:time==="week"?7:30;const [clock]=await rows("SELECT CURRENT_TIMESTAMP AS now");const now=String(clock.now).replace(" ","T");clauses.push(days?"c.last_message_at>=?":"DATE(c.last_message_at)=?");args.push(days?new Date(new Date(now).getTime()-days*86400000).toISOString().slice(0,19).replace("T"," "):now.slice(0,10))}
-  const where=clauses.join(" AND ");const total=(await rows(`SELECT COUNT(*) n FROM conversations c LEFT JOIN contacts ct ON ct.id=c.contact_id WHERE ${where}`,args))[0];
-  const items=await rows(`SELECT c.id,c.subject,c.unread,c.last_message_at,ct.name,ct.email,m.email mailbox,(SELECT substr(body_html,1,120) FROM messages mm WHERE mm.conversation_id=c.id ORDER BY mm.id DESC LIMIT 1) preview FROM conversations c LEFT JOIN contacts ct ON ct.id=c.contact_id LEFT JOIN mailboxes m ON m.id=c.mailbox_id WHERE ${where} ORDER BY c.last_message_at ${sort},c.id ${sort} LIMIT ? OFFSET ?`,[...args,size,(page-1)*size]);
+  const where=clauses.join(" AND ");
+  const [mailboxes,totalRows,items]=await Promise.all([
+    rows("SELECT id,email FROM mailboxes"+(user.role==="admin"?"":" WHERE id=?"),user.role==="admin"?[]:[Number(user.assigned_mailbox_id)||-1]),
+    rows(`SELECT COUNT(*) n FROM conversations c LEFT JOIN contacts ct ON ct.id=c.contact_id WHERE ${where}`,args),
+    rows(`SELECT c.id,c.subject,c.unread,c.last_message_at,ct.name,ct.email,m.email mailbox,(SELECT substr(body_html,1,120) FROM messages mm WHERE mm.conversation_id=c.id ORDER BY mm.id DESC LIMIT 1) preview FROM conversations c LEFT JOIN contacts ct ON ct.id=c.contact_id LEFT JOIN mailboxes m ON m.id=c.mailbox_id WHERE ${where} ORDER BY c.last_message_at ${sort},c.id ${sort} LIMIT ? OFFSET ?`,[...args,size,(page-1)*size]),
+  ]);
+  const [total]=totalRows;
   const base=`/conversations?${new URLSearchParams({filter,q,mailbox:String(mailbox),status,time,sort:p.sort||"newest"}).toString()}`;
   return <Shell title="Conversations" subtitle="All your team emails in one organized inbox" action={{href:"/conversations/new",label:"Compose email"}}>
     <div className="card"><div className="tabs"><Link href="/conversations" className={!filter?"selected":""}>All</Link><Link href="/conversations?filter=unread" className={filter==="unread"?"selected":""}>Unread</Link><Link href="/conversations?filter=sent" className={filter==="sent"?"selected":""}>Sent</Link></div>

@@ -24,7 +24,14 @@ async function initialize() {
     `CREATE TABLE IF NOT EXISTS email_events (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, recipient_id BIGINT UNSIGNED, message_id BIGINT UNSIGNED, type VARCHAR(30) NOT NULL, url TEXT, provider_event_id VARCHAR(255) UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_events_recipient (recipient_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS suppressions (email VARCHAR(255) NOT NULL PRIMARY KEY, reason VARCHAR(50) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   ];
-  for (const sql of statements) await pool.query(sql);
+  // Existing deployments only need a cheap metadata check on a cold start.
+  // Keep CREATE TABLE for fresh or partially initialized databases.
+  const [existing] = await pool.query<RowDataPacket[]>(
+    "SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions')"
+  );
+  if (Number(existing[0].count) !== statements.length) {
+    for (const sql of statements) await pool.query(sql);
+  }
   const admin=process.env.ADMIN_USERNAME,password=process.env.ADMIN_PASSWORD;
   if(admin&&password){
     if(process.env.NODE_ENV==="production"&&password.length<8)throw new Error("ADMIN_PASSWORD must be at least 8 characters in production");

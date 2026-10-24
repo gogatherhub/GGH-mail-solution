@@ -1,3 +1,4 @@
 {
+  "regions": ["bom1"],
   "crons": [{ "path": "/api/jobs/send-campaigns", "schedule": "0 3 * * *" }]
 }

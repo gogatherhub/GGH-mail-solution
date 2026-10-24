@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { compare } from "bcryptjs";
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { rows, run, type Row } from "./db";
 
@@ -19,7 +20,7 @@ export async function authenticate(username: string, password: string) {
   return true;
 }
 
-export async function currentUser(): Promise<Row | null> {
+export const currentUser = cache(async (): Promise<Row | null> => {
   const token = (await cookies()).get(cookieName)?.value;
   if (!token) return null;
   const parts=token.split(".");if(parts.length!==4)return null;
@@ -28,7 +29,7 @@ export async function currentUser(): Promise<Row | null> {
   const expected = sign(`${id}.${version}.${expires}`);
   if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
   return (await rows("SELECT id,username,name,email,role,assigned_mailbox_id FROM users WHERE id = ? AND session_version = ?", [Number(id),Number(version)]))[0] || null;
-}
+});
 
 export async function requireUser() { const user = await currentUser(); if (!user) redirect("/login"); return user; }
 export async function requireAdmin() { const user = await requireUser(); if (user.role !== "admin") redirect("/dashboard"); return user; }
