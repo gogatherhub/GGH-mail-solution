@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { LayoutDashboard, Inbox, UsersRound, ContactRound, Mail, Megaphone, LogOut, Plus } from "lucide-react";
+import { LayoutDashboard, Inbox, MessagesSquare, UsersRound, ContactRound, Mail, Megaphone, LogOut, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { logoutAction } from "@/app/actions";
 import { RefreshData } from "@/components/refresh-data";
 
 const links = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/conversations", label: "Conversations", icon: Inbox },
+  { href: "/conversations?filter=inbox", label: "Inbox", icon: Inbox },
+  { href: "/conversations", label: "Conversations", icon: MessagesSquare },
   { href: "/contacts", label: "Contacts", icon: ContactRound, admin: true },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone, admin: true },
   { href: "/users", label: "Users", icon: UsersRound, admin: true },
