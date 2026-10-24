@@ -91,7 +91,10 @@ export async function queueCampaign(form: FormData) {
   if (!campaign || campaign.status !== "draft" || (user.role !== "admin" && Number(user.assigned_mailbox_id) !== Number(campaign.mailbox_id))) throw new Error("Campaign unavailable");
   await run(`INSERT IGNORE INTO campaign_recipients (campaign_id,contact_id) SELECT ?,c.id FROM contacts c LEFT JOIN suppressions s ON s.email=c.email WHERE c.kind=? AND c.consent=1 AND c.status='active' AND s.email IS NULL`, [id, String(campaign.segment)]);
   const count = (await rows("SELECT COUNT(*) AS n FROM campaign_recipients WHERE campaign_id=?", [id]))[0];
-  if (!Number(count.n)) throw new Error("No eligible opted-in contacts in this segment");
+  if (!Number(count.n)) {
+    revalidatePath(`/campaigns/${id}`);
+    redirect(`/campaigns/${id}`);
+  }
   await run("UPDATE campaigns SET status='queued' WHERE id=?", [id]);
   revalidatePath("/campaigns"); redirect(`/campaigns/${id}`);
 }
