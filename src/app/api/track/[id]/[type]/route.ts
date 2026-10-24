@@ -19,6 +19,7 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{id:strin
       let destination:URL;try{destination=new URL(url)}catch{return new NextResponse("Invalid URL",{status:400})}
       if(!["http:","https:"].includes(destination.protocol))return new NextResponse("Invalid URL",{status:400});
       await run("INSERT INTO email_events (message_id,type,url) VALUES (?,'click',?)",[messageId,url]);
+      await run("INSERT INTO email_events (message_id,type) VALUES (?,'open')",[messageId]);
       return NextResponse.redirect(destination);
     }
     return new NextResponse("Not found",{status:404});
@@ -33,7 +34,7 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{id:strin
   if(type==="click"){
     let destination:URL;try{destination=new URL(url)}catch{return new NextResponse("Invalid URL",{status:400})}
     if(!["http:","https:"].includes(destination.protocol))return new NextResponse("Invalid URL",{status:400});
-    await run("UPDATE campaign_recipients SET clicked_at=COALESCE(clicked_at,CURRENT_TIMESTAMP) WHERE id=?",[rid]); await run("INSERT INTO email_events (recipient_id,type,url) VALUES (?,'click',?)",[rid,url]);
+    await run("UPDATE campaign_recipients SET clicked_at=COALESCE(clicked_at,CURRENT_TIMESTAMP),opened_at=COALESCE(opened_at,CURRENT_TIMESTAMP) WHERE id=?",[rid]); await run("INSERT INTO email_events (recipient_id,type,url) VALUES (?,'click',?)",[rid,url]);
     return NextResponse.redirect(destination);
   }
   return new NextResponse("Not found",{status:404});

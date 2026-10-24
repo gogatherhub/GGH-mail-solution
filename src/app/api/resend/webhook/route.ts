@@ -13,7 +13,7 @@ export async function POST(request:NextRequest){
     const resend=new Resend(process.env.RESEND_API_KEY||"re_webhook_verification_only");
     event=resend.webhooks.verify({payload,headers:{id:request.headers.get("svix-id")||"",timestamp:request.headers.get("svix-timestamp")||"",signature:request.headers.get("svix-signature")||""},webhookSecret:secret});
   }catch{return NextResponse.json({error:"Invalid signature"},{status:401})}
-  const mapping:{[key:string]:"delivered"|"bounce"|"complaint"}={"email.delivered":"delivered","email.bounced":"bounce","email.complained":"complaint"};
+  const mapping:{[key:string]:"delivered"|"bounce"|"complaint"|"open"|"click"}={"email.delivered":"delivered","email.bounced":"bounce","email.complained":"complaint","email.opened":"open","email.clicked":"click"};
   const type=mapping[event.type];
   if(type&&"email_id" in event.data){const recorded=await recordProviderEvent(type,String(event.data.email_id),request.headers.get("svix-id")||`${event.data.email_id}:${type}`);if(!recorded)return NextResponse.json({error:"Email is not stored yet; retry event"},{status:503})}
   if(event.type==="email.received"&&process.env.RESEND_API_KEY){

@@ -1,11 +1,15 @@
 import { rows, run, isDemo } from "./db";
 
-export async function recordProviderEvent(event:"delivered"|"bounce"|"complaint",providerId:string,eventId:string){
+export async function recordProviderEvent(event:"delivered"|"bounce"|"complaint"|"open"|"click",providerId:string,eventId:string){
   const recipient=(await rows("SELECT cr.id,cr.campaign_id,c.email FROM campaign_recipients cr JOIN contacts c ON c.id=cr.contact_id WHERE cr.provider_id=?",[providerId]))[0];
   if(!recipient){
     const message=(await rows("SELECT m.id,m.recipient FROM messages m WHERE m.provider_id=? AND m.direction='outbound'",[providerId]))[0];
     if(!message)return false;
     const messageId=Number(message.id);
+    if(event==="open"||event==="click"){
+      await run(isDemo?"INSERT OR IGNORE INTO email_events (message_id,type,provider_event_id) VALUES (?,?,?)":"INSERT IGNORE INTO email_events (message_id,type,provider_event_id) VALUES (?,?,?)",[messageId,event,eventId]);
+      return true;
+    }
     if(event==="delivered")await run("UPDATE messages SET status='delivered' WHERE id=? AND status NOT IN ('bounced','complaint')",[messageId]);
     else{
       await run("UPDATE messages SET status=? WHERE id=?",[event==="bounce"?"bounced":"complaint",messageId]);
@@ -15,6 +19,11 @@ export async function recordProviderEvent(event:"delivered"|"bounce"|"complaint"
     return true;
   }
   const id=Number(recipient.id);
+  if(event==="open"||event==="click"){
+    await run(event==="click"?"UPDATE campaign_recipients SET clicked_at=COALESCE(clicked_at,CURRENT_TIMESTAMP),opened_at=COALESCE(opened_at,CURRENT_TIMESTAMP) WHERE id=?":"UPDATE campaign_recipients SET opened_at=COALESCE(opened_at,CURRENT_TIMESTAMP) WHERE id=?",[id]);
+    await run(isDemo?"INSERT OR IGNORE INTO email_events (recipient_id,type,provider_event_id) VALUES (?,?,?)":"INSERT IGNORE INTO email_events (recipient_id,type,provider_event_id) VALUES (?,?,?)",[id,event,eventId]);
+    return true;
+  }
   if(event==="delivered")await run("UPDATE campaign_recipients SET status='delivered',delivered_at=COALESCE(delivered_at,CURRENT_TIMESTAMP) WHERE id=? AND status NOT IN ('bounced','complaint')",[id]);
   else{
     await run("UPDATE campaign_recipients SET status=? WHERE id=?",[event==="bounce"?"bounced":"complaint",id]);
