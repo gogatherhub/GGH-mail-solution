@@ -22,7 +22,7 @@ async function initialize() {
     const username = process.env.ADMIN_USERNAME;
     const password = process.env.ADMIN_PASSWORD;
     if (!username || !password) throw new Error("Set ADMIN_USERNAME and ADMIN_PASSWORD for demo mode");
-    if (process.env.NODE_ENV === "production" && password.length < 12) throw new Error("ADMIN_PASSWORD must be at least 12 characters in production");
+    if (process.env.NODE_ENV === "production" && password.length < 8) throw new Error("ADMIN_PASSWORD must be at least 8 characters in production");
     await client.execute({ sql: "INSERT INTO users (username,password_hash,name,email,role,job_role) VALUES (?,?,?,?,?,?)", args: [username, await hash(password, 12), "Administrator", "admin@example.com", "admin", "Administrator"] });
     await client.execute("INSERT INTO mailboxes (email,display_name,type) VALUES ('hello@example.com','General Inbox','General'),('events@example.com','Events Team','Events')");
     await client.execute("INSERT INTO contacts (name,email,company,kind,consent) VALUES ('Aarav Mehta','aarav@example.com','Northstar Co','client',0),('Priya Shah','priya@example.com','Bloom Vendors','vendor',0),('Rohan Kapoor','rohan@example.com','Event Studio','planner',0),('Neha Rao','neha@example.com','Bright Events','client',0),('Kabir Jain','kabir@example.com','Supply House','vendor',0)");

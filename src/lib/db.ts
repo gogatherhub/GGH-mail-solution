@@ -27,7 +27,7 @@ async function initialize() {
   for (const sql of statements) await pool.query(sql);
   const admin=process.env.ADMIN_USERNAME,password=process.env.ADMIN_PASSWORD;
   if(admin&&password){
-    if(process.env.NODE_ENV==="production"&&password.length<12)throw new Error("ADMIN_PASSWORD must be at least 12 characters in production");
+    if(process.env.NODE_ENV==="production"&&password.length<8)throw new Error("ADMIN_PASSWORD must be at least 8 characters in production");
     const [found]=await pool.execute<RowDataPacket[]>("SELECT id FROM users WHERE username=?",[admin]);
     if(!found.length)await pool.execute("INSERT INTO users (username,password_hash,name,role,job_role) VALUES (?,?,?,?,?)",[admin,await hash(password,12),"Administrator","admin","Administrator"])
   }
