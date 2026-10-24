@@ -15,6 +15,7 @@ async function initialize() {
     "CREATE TABLE IF NOT EXISTS campaign_recipients (id INTEGER PRIMARY KEY AUTOINCREMENT,campaign_id INTEGER NOT NULL,contact_id INTEGER NOT NULL,provider_id TEXT,status TEXT DEFAULT 'queued',sent_at TEXT,delivered_at TEXT,opened_at TEXT,clicked_at TEXT,UNIQUE(campaign_id,contact_id))",
     "CREATE TABLE IF NOT EXISTS email_events (id INTEGER PRIMARY KEY AUTOINCREMENT,recipient_id INTEGER,message_id INTEGER,type TEXT NOT NULL,url TEXT,provider_event_id TEXT UNIQUE,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS suppressions (email TEXT NOT NULL PRIMARY KEY,reason TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE TABLE IF NOT EXISTS send_attempts (idempotency_key TEXT NOT NULL PRIMARY KEY,user_id INTEGER NOT NULL,conversation_id INTEGER,message_id INTEGER,status TEXT NOT NULL DEFAULT 'processing',created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
   ];
   for (const sql of schema) await client.execute(sql);
   const existing = await client.execute("SELECT COUNT(*) AS n FROM users");

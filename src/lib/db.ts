@@ -23,11 +23,12 @@ async function initialize() {
     `CREATE TABLE IF NOT EXISTS campaign_recipients (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, campaign_id BIGINT UNSIGNED NOT NULL, contact_id BIGINT UNSIGNED NOT NULL, provider_id VARCHAR(255), status VARCHAR(30) DEFAULT 'queued', sent_at TIMESTAMP NULL, delivered_at TIMESTAMP NULL, opened_at TIMESTAMP NULL, clicked_at TIMESTAMP NULL, UNIQUE KEY uq_campaign_contact (campaign_id,contact_id), KEY idx_recipients_contact (contact_id), KEY idx_recipients_provider (provider_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS email_events (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, recipient_id BIGINT UNSIGNED, message_id BIGINT UNSIGNED, type VARCHAR(30) NOT NULL, url TEXT, provider_event_id VARCHAR(255) UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_events_recipient (recipient_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS suppressions (email VARCHAR(255) NOT NULL PRIMARY KEY, reason VARCHAR(50) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS send_attempts (idempotency_key CHAR(36) NOT NULL PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, conversation_id BIGINT UNSIGNED, message_id BIGINT UNSIGNED, status VARCHAR(20) NOT NULL DEFAULT 'processing', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   ];
   // Existing deployments only need a cheap metadata check on a cold start.
   // Keep CREATE TABLE for fresh or partially initialized databases.
   const [existing] = await pool.query<RowDataPacket[]>(
-    "SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions')"
+    "SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions','send_attempts')"
   );
   if (Number(existing[0].count) !== statements.length) {
     for (const sql of statements) await pool.query(sql);

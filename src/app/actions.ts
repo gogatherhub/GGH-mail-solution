@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { hash } from "bcryptjs";
 import sanitizeHtml from "sanitize-html";
@@ -9,6 +10,7 @@ import { authenticate, logout, requireAdmin, requireUser } from "@/lib/auth";
 import { rows, run, isDemo } from "@/lib/db";
 import { sendMail } from "@/lib/mail";
 import { dispatchCampaignBatch } from "@/lib/campaign-dispatch";
+import { trackedDirectHtml } from "@/lib/tracking";
 
 const val = (form: FormData, key: string) => String(form.get(key) || "").trim();
 const clean = (html: string) => sanitizeHtml(html, { allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]), allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, a: ["href", "target", "rel"], img: ["src", "alt"] }, allowedSchemes: ["https", "http", "mailto"] });
@@ -121,6 +123,14 @@ export async function sendConversation(form: FormData) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to) || !subject || !body) throw new Error("Complete message fields");
   const files=form.getAll("attachments").filter((f):f is File=>f instanceof File&&f.size>0);
   if(files.length>5||files.some(f=>f.size>10*1024*1024)||files.reduce((n,f)=>n+f.size,0)>20*1024*1024)throw new Error("Attach up to 5 files, 10 MB each and 20 MB total");
+  const suppliedKey=val(form,"idempotency_key");
+  const idempotencyKey=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(suppliedKey)?suppliedKey:randomUUID();
+  const claim=await run(isDemo?"INSERT OR IGNORE INTO send_attempts (idempotency_key,user_id) VALUES (?,?)":"INSERT IGNORE INTO send_attempts (idempotency_key,user_id) VALUES (?,?)",[idempotencyKey,Number(user.id)]);
+  if(!claim.rowsAffected){
+    const [existing]=await rows("SELECT conversation_id,status FROM send_attempts WHERE idempotency_key=? AND user_id=?",[idempotencyKey,Number(user.id)]);
+    if(existing?.conversation_id)redirect(`/conversations/${existing.conversation_id}${existing.status==="failed"?"?send_error=provider":""}`);
+    redirect("/conversations?send_status=processing");
+  }
   const attachments=await Promise.all(files.map(async f=>({filename:f.name.replace(/[^\w. -]/g,"_").slice(0,120),content:Buffer.from(await f.arrayBuffer()),contentType:f.type||"application/octet-stream"})));
   const contact = (await rows("SELECT id FROM contacts WHERE email=?", [to]))[0];
   let contactId = contact?.id;
@@ -133,19 +143,23 @@ export async function sendConversation(form: FormData) {
     if(String(existing.contact_email).toLowerCase()!==to)throw new Error("Reply recipient does not match this conversation");
   } else { const created = await run("INSERT INTO conversations (mailbox_id,contact_id,subject) VALUES (?,?,?)", [mailboxId, Number(contactId), subject]); conversationId = Number(created.lastInsertRowid); }
   const message = await run("INSERT INTO messages (conversation_id,direction,sender,recipient,cc,bcc,subject,body_html) VALUES (?,?,?,?,?,?,?,?)", [conversationId, "outbound", String(mailbox.email), to, val(form, "cc"), val(form, "bcc"), subject, body]);
+  await run("UPDATE send_attempts SET conversation_id=?,message_id=? WHERE idempotency_key=?",[conversationId,Number(message.lastInsertRowid),idempotencyKey]);
   let providerId: string | undefined;
   try {
-    providerId = await sendMail({ from: String(mailbox.email), to, cc: val(form, "cc"), bcc: val(form, "bcc"), subject, html: body,attachments });
+    const html=process.env.APP_URL?.startsWith("https://")?trackedDirectHtml(body,Number(message.lastInsertRowid)):body;
+    providerId = await sendMail({ from: String(mailbox.email), to, cc: val(form, "cc"), bcc: val(form, "bcc"), subject, html,attachments,idempotencyKey });
   } catch (error) {
     console.error("Email provider send failed:", error instanceof Error ? error.name : "UNKNOWN");
     await run("UPDATE messages SET status='failed' WHERE id=?", [Number(message.lastInsertRowid)]);
-    revalidatePath("/conversations");
+    await run("UPDATE send_attempts SET status='failed' WHERE idempotency_key=?",[idempotencyKey]);
+    revalidatePath("/conversations");revalidatePath(`/conversations/${conversationId}`);revalidatePath(`/contacts/${contactId}`);
     const reason=String(mailbox.email).toLowerCase().endsWith("@gmail.com")?"gmail_sender":"provider";
     redirect(`/conversations/${conversationId}?send_error=${reason}`);
   }
   await run("UPDATE messages SET status='sent',provider_id=? WHERE id=?", [providerId, Number(message.lastInsertRowid)]);
+  await run("UPDATE send_attempts SET status='sent' WHERE idempotency_key=?",[idempotencyKey]);
   await run("UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP,unread=0 WHERE id=?", [conversationId]);
-  revalidatePath("/conversations"); redirect(`/conversations/${conversationId}`);
+  revalidatePath("/conversations");revalidatePath(`/conversations/${conversationId}`);revalidatePath("/dashboard");revalidatePath(`/contacts/${contactId}`); redirect(`/conversations/${conversationId}`);
 }
 
 export async function setRead(form: FormData) {
