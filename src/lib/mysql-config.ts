@@ -30,7 +30,11 @@ export function mysqlConfigFromUrl(rawUrl: string): PoolOptions {
     password: decodeURIComponent(url.password),
     database: decodeURIComponent(url.pathname.slice(1)),
     ssl,
-    connectionLimit: 10,
+    // Vercel creates a pool per warm function instance. Keep each instance small
+    // and release idle sockets so a burst of navigation cannot exhaust Aiven.
+    connectionLimit: 2,
+    maxIdle: 1,
+    idleTimeout: 5000,
     waitForConnections: true,
     decimalNumbers: true,
   };

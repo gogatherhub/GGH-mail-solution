@@ -20,7 +20,7 @@ export async function Shell({ title, subtitle, action, children }: { title: stri
     <aside className="sidebar">
       <Link className="brand" href="/dashboard"><span className="brand-mark"><Mail size={20}/></span><span>Welfog<span className="brand-muted">mail</span></span></Link>
       <div className="workspace-label">WORKSPACE</div>
-      <nav className="side-nav">{links.filter(x => !x.admin || user.role === "admin").map(x => <Link key={x.href} href={x.href} prefetch={true}><x.icon size={18}/><span>{x.label}</span></Link>)}</nav>
+      <nav className="side-nav">{links.filter(x => !x.admin || user.role === "admin").map(x => <Link key={x.href} href={x.href} prefetch={false}><x.icon size={18}/><span>{x.label}</span></Link>)}</nav>
       <div className="sidebar-bottom"><div className="sidebar-help"><strong>Stay on top of every reply.</strong><span>One place for inboxes, contacts and outreach.</span></div><div className="user-box"><div className="avatar">{String(user.name || user.username).slice(0,1).toUpperCase()}</div><div><strong>{String(user.name || user.username)}</strong><small>{String(user.role)}</small></div><form action={logoutAction}><button aria-label="Log out" title="Log out"><LogOut size={17}/></button></form></div></div>
     </aside>
     <main className="main">

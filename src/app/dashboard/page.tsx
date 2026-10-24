@@ -4,7 +4,7 @@ import { Inbox, MailOpen, Send, Mail, ArrowUpRight, UserPlus } from "lucide-reac
 import { Shell, Empty, Badge } from "@/components/shell";
 import { rows, isDemo } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { conversationStatus, conversationReadFilterSql, latestEngagedSql, readStateSql } from "@/lib/conversation-status";
+import { conversationStatus, conversationReadFilterSql, latestEngagedSql } from "@/lib/conversation-status";
 
 type Params={date?:string;q?:string;mailbox?:string;status?:string;sort?:string;page?:string};
 export default async function Dashboard({searchParams}:{searchParams:Promise<Params>}){
@@ -18,7 +18,7 @@ export default async function Dashboard({searchParams}:{searchParams:Promise<Par
   const clause=where.join(" AND ");
   const [clock,statsRows,activeRows,mailboxes,totalRows,recent]=await Promise.all([
     selectedDate?Promise.resolve([{today:selectedDate}]):rows(isDemo?"SELECT DATE('now') AS today":"SELECT DATE_FORMAT(CURRENT_DATE(), '%Y-%m-%d') AS today"),
-    rows(`SELECT COUNT(*) total,SUM(CASE WHEN ${readStateSql}=0 THEN 1 ELSE 0 END) unread FROM conversations c WHERE 1=1${scope}`,scopeArgs),
+    rows(`SELECT COUNT(*) total,SUM(CASE WHEN c.unread=1 THEN 1 ELSE 0 END) unread FROM conversations c WHERE 1=1${scope}`,scopeArgs),
     rows("SELECT COUNT(*) n FROM mailboxes WHERE status='active'"+(user.role==="admin"?"":" AND id=?"),user.role==="admin"?[]:[Number(user.assigned_mailbox_id)||-1]),
     rows("SELECT id,email FROM mailboxes"+(user.role==="admin"?"":" WHERE id=?"),user.role==="admin"?[]:[Number(user.assigned_mailbox_id)||-1]),
     rows(`SELECT COUNT(*) n FROM conversations c LEFT JOIN contacts ct ON ct.id=c.contact_id WHERE ${clause}`,args),

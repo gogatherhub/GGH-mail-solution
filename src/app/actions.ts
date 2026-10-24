@@ -158,6 +158,7 @@ export async function sendConversation(form: FormData) {
   }
   await run("UPDATE messages SET status='sent',provider_id=? WHERE id=?", [providerId, Number(message.lastInsertRowid)]);
   await run("UPDATE send_attempts SET status='sent' WHERE idempotency_key=?",[idempotencyKey]);
+  await run("UPDATE messages SET status='read' WHERE conversation_id=? AND direction='inbound'",[conversationId]);
   await run("UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP,unread=0 WHERE id=?", [conversationId]);
   revalidatePath("/conversations");revalidatePath(`/conversations/${conversationId}`);revalidatePath("/dashboard");revalidatePath(`/contacts/${contactId}`); redirect(`/conversations/${conversationId}`);
 }
@@ -167,17 +168,19 @@ export async function setRead(form: FormData) {
   const item = (await rows("SELECT c.mailbox_id,(SELECT m.direction FROM messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_direction FROM conversations c WHERE c.id=?", [id]))[0];
   if (!item || (user.role !== "admin" && Number(user.assigned_mailbox_id) !== Number(item.mailbox_id))) throw new Error("Access denied");
   if(item.last_direction!=="inbound")return;
-  await run("UPDATE conversations SET unread=? WHERE id=?", [unread, id]); revalidatePath("/conversations"); revalidatePath(`/conversations/${id}`);
+  await run("UPDATE messages SET status=? WHERE conversation_id=? AND direction='inbound'",[unread?"received":"read",id]);
+  await run("UPDATE conversations SET unread=? WHERE id=?", [unread, id]); revalidatePath("/conversations"); revalidatePath(`/conversations/${id}`);revalidatePath("/dashboard");
 }
 
 export async function bulkConversations(form:FormData){
   const user=await requireUser();const ids=form.getAll("ids").map(Number).filter(Number.isSafeInteger).filter(x=>x>0).slice(0,100);const action=val(form,"action");
-  if(!["read","unread","delete"].includes(action)||!ids.length)throw new Error("Select conversations and an action");
+  if(!["read","unread","delete"].includes(action))throw new Error("Invalid conversation action");
+  if(!ids.length)redirect("/conversations");
   for(const id of ids){const c=(await rows("SELECT co.mailbox_id,(SELECT m.direction FROM messages m WHERE m.conversation_id=co.id ORDER BY m.id DESC LIMIT 1) last_direction FROM conversations co WHERE co.id=?",[id]))[0];if(!c||(user.role!=="admin"&&Number(user.assigned_mailbox_id)!==Number(c.mailbox_id)))continue;
     if(action==="delete"){await run("DELETE FROM messages WHERE conversation_id=?",[id]);await run("DELETE FROM conversations WHERE id=?",[id])}
-    else if(c.last_direction==="inbound")await run("UPDATE conversations SET unread=? WHERE id=?",[action==="unread"?1:0,id]);
+    else if(c.last_direction==="inbound"){await run("UPDATE messages SET status=? WHERE conversation_id=? AND direction='inbound'",[action==="unread"?"received":"read",id]);await run("UPDATE conversations SET unread=? WHERE id=?",[action==="unread"?1:0,id])}
   }
-  revalidatePath("/conversations");redirect("/conversations");
+  revalidatePath("/conversations");revalidatePath("/dashboard");redirect("/conversations");
 }
 
 export async function deleteUser(form:FormData){const admin=await requireAdmin(),id=Number(val(form,"id"));if(id===Number(admin.id))throw new Error("You cannot delete your own account");await run("DELETE FROM users WHERE id=?",[id]);revalidatePath("/users");redirect("/users")}

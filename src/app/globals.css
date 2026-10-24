@@ -81,11 +81,16 @@
   .conversation-row { @apply flex min-w-0 items-center gap-3 border-b border-[#f0f2f6] px-[22px] py-[15px]; }
   .conversation-row:last-child { @apply border-b-0; }
   .conversation-row:hover, .mini-row:hover { @apply bg-[#f9faff]; }
-  .conversation-row.is-unread { @apply bg-[#fbfcff]; }
+  .conversation-row.is-unread { @apply border-l-4 border-l-brand bg-[#eef3ff]; }
+  .conversation-row.is-unread:hover { @apply bg-[#e8efff]; }
+  .conversation-row.is-unread .row-grow strong { @apply font-extrabold text-ink; }
+  .conversation-row.is-inbound:not(.is-unread) { @apply bg-[#fcfdff]; }
+  .conversation-row.is-outbound { @apply bg-white; }
   .conversation-link { @apply flex min-w-0 flex-1 items-center gap-3; }
   .row-grow { @apply grid min-w-0 flex-1 gap-1; }
   .row-grow strong { @apply overflow-hidden text-ellipsis whitespace-nowrap text-[13px]; }
   .row-grow small { @apply overflow-hidden text-ellipsis whitespace-nowrap text-xs text-subtle; }
+  .row-grow .row-preview { @apply text-[11px]; }
   .row-meta { @apply grid min-w-[110px] justify-items-end gap-1.5; }
   .row-meta small { @apply max-w-[140px] overflow-hidden text-ellipsis text-[11px] text-subtle; }
   .badge { @apply inline-flex w-max rounded-full bg-[#f0f2f6] px-2.5 py-1.5 text-[10px] font-extrabold text-[#667186] capitalize; }
@@ -144,7 +149,8 @@
   .campaign-hero p { @apply m-0 text-xs text-subtle; }
   .activity-row { @apply grid gap-1.5 border-b border-line px-[22px] py-4 text-[13px]; }
   .activity-row small { @apply text-subtle; }
-  .badge-line { @apply flex gap-1; }
+  .badge-line { @apply mt-1 flex flex-wrap gap-1; }
+  .bulk-toolbar button:disabled { @apply cursor-not-allowed opacity-40; }
   .email-preview { @apply overflow-auto p-5 text-[13px] leading-relaxed; }
   .health-row { @apply mx-5 flex gap-5 border-t border-line py-4 text-xs text-subtle; }
   .thread-layout { @apply grid grid-cols-[minmax(0,1fr)_265px] gap-5; }

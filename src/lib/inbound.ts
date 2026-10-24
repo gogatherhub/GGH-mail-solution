@@ -19,6 +19,7 @@ export async function recordInboundMessage(body:{from:string;to:string;recipient
   const existing=recent.find(item=>topic(String(item.subject))===topic(subject));
   let conversationId=Number(existing?.id||0);
   if(!conversationId){const result=await run("INSERT INTO conversations (mailbox_id,contact_id,subject,unread) VALUES (?,?,?,1)",[Number(mailbox.id),Number(contact.id),subject]);conversationId=Number(result.lastInsertRowid)}
+  else{const state=(await rows("SELECT unread FROM conversations WHERE id=?",[conversationId]))[0];if(!Number(state?.unread))await run("UPDATE messages SET status='read' WHERE conversation_id=? AND direction='inbound' AND status<>'read'",[conversationId])}
   await run("INSERT INTO messages (conversation_id,direction,sender,recipient,subject,body_html,status,provider_id) VALUES (?,'inbound',?,?,?,?, 'received',?)",[conversationId,from,mailbox.email,subject,html||"<p>(empty message)</p>",messageId||null]);
   await run("UPDATE conversations SET unread=1,last_message_at=CURRENT_TIMESTAMP WHERE id=?",[conversationId]);
   return conversationId;
