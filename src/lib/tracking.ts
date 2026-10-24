@@ -1,15 +1,9 @@
 import { createHmac } from "node:crypto";
 import sanitizeHtml from "sanitize-html";
+import { appOrigin } from "./app-url";
 
 function key() { if (!process.env.TRACKING_SECRET || process.env.TRACKING_SECRET.length < 32) throw new Error("TRACKING_SECRET missing or too short"); return process.env.TRACKING_SECRET; }
 export function signature(recipientId: number|string, url: string) { return createHmac("sha256", key()).update(`${recipientId}:${url}`).digest("hex"); }
-function trackingOrigin() {
-  const origin=process.env.APP_URL;
-  if(!origin) throw new Error("APP_URL missing");
-  const publicUrl=new URL(origin);
-  if(publicUrl.protocol!=="https:"||["localhost","127.0.0.1"].includes(publicUrl.hostname))throw new Error("Set APP_URL to a public HTTPS address before sending tracked campaigns");
-  return origin.replace(/\/$/,"");
-}
 function linkifyPlainUrls(html:string){
   let insideAnchor=false;
   return html.split(/(<[^>]+>)/g).map(part=>{
@@ -32,7 +26,7 @@ function linkifyPlainUrls(html:string){
   }).join("");
 }
 function rewriteTrackedHtml(html:string,id:string|number) {
-  const origin=trackingOrigin();
+  const origin=appOrigin();
   const safe=sanitizeHtml(html,{allowedTags:sanitizeHtml.defaults.allowedTags.concat(["img"]),allowedAttributes:{...sanitizeHtml.defaults.allowedAttributes,a:["href","target","rel"],img:["src","alt"]},allowedSchemes:["http","https","mailto"]});
   const rewritten=linkifyPlainUrls(safe).replace(/href="(https?:[^\"]+)"/gi,(_match,escaped:string)=>{
     const url=escaped.replace(/&amp;/g,"&");

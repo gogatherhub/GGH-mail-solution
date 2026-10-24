@@ -146,14 +146,14 @@ export async function sendConversation(form: FormData) {
   await run("UPDATE send_attempts SET conversation_id=?,message_id=? WHERE idempotency_key=?",[conversationId,Number(message.lastInsertRowid),idempotencyKey]);
   let providerId: string | undefined;
   try {
-    const html=process.env.APP_URL?.startsWith("https://")?trackedDirectHtml(body,Number(message.lastInsertRowid)):body;
+    const html=trackedDirectHtml(body,Number(message.lastInsertRowid));
     providerId = await sendMail({ from: String(mailbox.email), to, cc: val(form, "cc"), bcc: val(form, "bcc"), subject, html,attachments,idempotencyKey });
   } catch (error) {
     console.error("Email provider send failed:", error instanceof Error ? error.name : "UNKNOWN");
     await run("UPDATE messages SET status='failed' WHERE id=?", [Number(message.lastInsertRowid)]);
     await run("UPDATE send_attempts SET status='failed' WHERE idempotency_key=?",[idempotencyKey]);
     revalidatePath("/conversations");revalidatePath(`/conversations/${conversationId}`);revalidatePath(`/contacts/${contactId}`);
-    const reason=String(mailbox.email).toLowerCase().endsWith("@gmail.com")?"gmail_sender":"provider";
+    const reason=String(mailbox.email).toLowerCase().endsWith("@gmail.com")?"gmail_sender":error instanceof Error&&error.message.includes("APP_URL")?"config":"provider";
     redirect(`/conversations/${conversationId}?send_error=${reason}`);
   }
   await run("UPDATE messages SET status='sent',provider_id=? WHERE id=?", [providerId, Number(message.lastInsertRowid)]);

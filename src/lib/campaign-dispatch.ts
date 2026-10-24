@@ -1,11 +1,11 @@
 import { rows, run } from "./db";
 import { sendMail } from "./mail";
 import { trackedHtml } from "./tracking";
+import { appOrigin } from "./app-url";
 
 export function sendingConfigError() {
   if(!process.env.RESEND_API_KEY&&!process.env.AWS_REGION&&!(process.env.SMTP_HOST&&process.env.SMTP_USER&&process.env.SMTP_PASSWORD))return "Set RESEND_API_KEY before sending";
-  let publicUrl:URL;try{publicUrl=new URL(process.env.APP_URL||"")}catch{return "Set APP_URL to a public HTTPS address"}
-  if(publicUrl.protocol!=="https:"||["localhost","127.0.0.1"].includes(publicUrl.hostname))return "Set APP_URL to a public HTTPS address";
+  try{appOrigin()}catch{return "Set APP_URL to your deployed HTTPS domain"}
   return null;
 }
 
