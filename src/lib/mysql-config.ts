@@ -37,5 +37,8 @@ export function mysqlConfigFromUrl(rawUrl: string): PoolOptions {
     idleTimeout: 5000,
     waitForConnections: true,
     decimalNumbers: true,
+    // UI, range filters and chart buckets all use database timestamp strings in UTC.
+    dateStrings: true,
+    timezone: "Z",
   };
 }

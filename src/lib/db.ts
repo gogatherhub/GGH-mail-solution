@@ -1,6 +1,6 @@
 import mysql, { type Pool, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import { hash } from "bcryptjs";
-import { demoRows, demoRun } from "./demo-db";
+import { demoRows, demoRun, demoTransaction } from "./demo-db";
 import { mysqlConfigFromUrl } from "./mysql-config";
 
 let pool: Pool | undefined;
@@ -8,6 +8,7 @@ let ready: Promise<Pool> | undefined;
 
 export type Row = Record<string, string | number | null>;
 export type DbResult = { lastInsertRowid: number; rowsAffected: number };
+export type DbSession = { rows: typeof rows; run: typeof run };
 export const isDemo = process.env.DEMO_MODE === "true";
 
 async function initialize() {
@@ -24,11 +25,15 @@ async function initialize() {
     `CREATE TABLE IF NOT EXISTS email_events (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, recipient_id BIGINT UNSIGNED, message_id BIGINT UNSIGNED, type VARCHAR(30) NOT NULL, url TEXT, provider_event_id VARCHAR(255) UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_events_recipient (recipient_id), KEY idx_events_message (message_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS suppressions (email VARCHAR(255) NOT NULL PRIMARY KEY, reason VARCHAR(50) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS send_attempts (idempotency_key CHAR(36) NOT NULL PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, conversation_id BIGINT UNSIGNED, message_id BIGINT UNSIGNED, status VARCHAR(20) NOT NULL DEFAULT 'processing', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS email_outbox (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, message_id BIGINT UNSIGNED NOT NULL UNIQUE, user_id BIGINT UNSIGNED NOT NULL, idempotency_key CHAR(36) NOT NULL UNIQUE, payload_json LONGTEXT NOT NULL, status VARCHAR(24) NOT NULL DEFAULT 'queued', attempts INT NOT NULL DEFAULT 0, last_error VARCHAR(500), locked_at TIMESTAMP NULL, sent_at TIMESTAMP NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_outbox_status (status,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS email_drafts (id CHAR(36) NOT NULL PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, payload_json MEDIUMTEXT NOT NULL, revision INT NOT NULL DEFAULT 1, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_drafts_user (user_id,updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS auth_throttles (key_hash CHAR(64) NOT NULL PRIMARY KEY, attempts INT NOT NULL DEFAULT 1, window_started BIGINT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS user_avatars (user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,image_data MEDIUMTEXT NOT NULL,updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   ];
   // Existing deployments only need a cheap metadata check on a cold start.
   // Keep CREATE TABLE for fresh or partially initialized databases.
   const [existing] = await pool.query<RowDataPacket[]>(
-    "SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions','send_attempts')) AS count,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='email_events' AND index_name='idx_events_message') AS event_index,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='messages' AND index_name='idx_messages_provider') AS provider_index"
+    "SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions','send_attempts','email_outbox','email_drafts','auth_throttles','user_avatars')) AS count,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='email_events' AND index_name='idx_events_message') AS event_index,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='messages' AND index_name='idx_messages_provider') AS provider_index"
   );
   if (Number(existing[0].count) !== statements.length) {
     for (const sql of statements) await pool.query(sql);
@@ -48,3 +53,18 @@ async function initialize() {
 export async function db(){if(!ready)ready=initialize().catch(error=>{ready=undefined;pool?.end().catch(()=>{});pool=undefined;throw error});return ready}
 export async function rows(sql:string,args:(string|number|null)[]=[]):Promise<Row[]>{if(isDemo)return demoRows(sql,args);const [result]=await (await db()).execute<RowDataPacket[]>(sql,args);return result as Row[]}
 export async function run(sql:string,args:(string|number|null)[]=[]):Promise<DbResult>{if(isDemo)return demoRun(sql,args);const [result]=await (await db()).execute<ResultSetHeader>(sql,args);return {lastInsertRowid:result.insertId,rowsAffected:result.affectedRows}}
+
+export async function transaction<T>(work: (session: DbSession) => Promise<T>): Promise<T> {
+  if (isDemo) return demoTransaction(work);
+  const connection = await (await db()).getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await work({
+      rows: async (sql, args = []) => { const [result] = await connection.execute<RowDataPacket[]>(sql, args); return result as Row[]; },
+      run: async (sql, args = []) => { const [result] = await connection.execute<ResultSetHeader>(sql, args); return { lastInsertRowid: result.insertId, rowsAffected: result.affectedRows }; },
+    });
+    await connection.commit();
+    return result;
+  } catch (error) { await connection.rollback(); throw error; }
+  finally { connection.release(); }
+}

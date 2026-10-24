@@ -3,12 +3,13 @@ import { Resend } from "resend";
 import { recordProviderEvent } from "@/lib/provider-events";
 import { recordInboundMessage } from "@/lib/inbound";
 import { revalidatePath } from "next/cache";
+import { readLimitedText } from "@/lib/webhook";
 
 export async function POST(request:NextRequest){
   const secret=process.env.RESEND_WEBHOOK_SECRET;
   if(!secret)return NextResponse.json({error:"Webhook not configured"},{status:503});
   const size=Number(request.headers.get("content-length")||0);if(size>64*1024)return NextResponse.json({error:"Payload too large"},{status:413});
-  const payload=await request.text();if(payload.length>64*1024)return NextResponse.json({error:"Payload too large"},{status:413});
+  let payload:string;try{payload=await readLimitedText(request,64*1024)}catch{return NextResponse.json({error:"Invalid or oversized payload"},{status:413})}
   let event:ReturnType<Resend["webhooks"]["verify"]>;
   try{
     const resend=new Resend(process.env.RESEND_API_KEY||"re_webhook_verification_only");

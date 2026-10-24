@@ -1,8 +1,8 @@
 "use client";
 
-import { useFormStatus } from "react-dom";
+import { Send } from "lucide-react";
+import { SubmitButton } from "@/components/submit-button";
 
-export function SendButton({children,className}:{children:React.ReactNode;className:string}) {
-  const {pending}=useFormStatus();
-  return <button className={className} disabled={pending} aria-disabled={pending}>{pending?"Sending…":children}</button>;
+export function SendButton({children,className,disabled=false}:{children:React.ReactNode;className:string;disabled?:boolean}) {
+  return <SubmitButton className={className} disabled={disabled} pendingLabel="Queuing…"><Send size={15}/>{children}</SubmitButton>;
 }

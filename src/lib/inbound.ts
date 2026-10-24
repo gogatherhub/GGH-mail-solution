@@ -14,7 +14,9 @@ export async function recordInboundMessage(body:{from:string;to:string;recipient
   const messageId=String(body.messageId||"").slice(0,255);
   if(messageId){const existing=(await rows("SELECT conversation_id FROM messages WHERE provider_id=? AND direction='inbound' LIMIT 1",[messageId]))[0];if(existing)return Number(existing.conversation_id)}
   const html=body.html?.trim()?sanitizeHtml(body.html,{allowedTags:sanitizeHtml.defaults.allowedTags,allowedAttributes:sanitizeHtml.defaults.allowedAttributes}):sanitizeHtml(body.text||"",{allowedTags:[],allowedAttributes:{}}).replace(/\r?\n/g,"<br>");
-  let contact=(await rows("SELECT id FROM contacts WHERE email=?",[from]))[0];if(!contact){try{const result=await run("INSERT INTO contacts (name,email,kind) VALUES (?,?,?)",[String(body.name||from).slice(0,200),from,"client"]);contact={id:Number(result.lastInsertRowid)}}catch(error){if((error as {code?:string}).code!=="ER_DUP_ENTRY")throw error;contact=(await rows("SELECT id FROM contacts WHERE email=?",[from]))[0]}}
+  let contact=(await rows("SELECT id FROM contacts WHERE LOWER(TRIM(email))=? ORDER BY id LIMIT 1",[from]))[0];
+  if(!contact){await run("INSERT IGNORE INTO contacts (name,email,kind) VALUES (?,?,?)",[String(body.name||from).slice(0,200),from,"client"]);[contact]=await rows("SELECT id FROM contacts WHERE LOWER(TRIM(email))=? ORDER BY id LIMIT 1",[from]);}
+  if(!contact)throw new Error("Contact unavailable");
   const recent=await rows("SELECT id,subject FROM conversations WHERE mailbox_id=? AND contact_id=? ORDER BY id DESC LIMIT 30",[Number(mailbox.id),Number(contact.id)]);
   const existing=recent.find(item=>topic(String(item.subject))===topic(subject));
   let conversationId=Number(existing?.id||0);

@@ -20,6 +20,42 @@ Next.js shared inbox and outreach workspace. The UI, server actions, API routes 
 
 Demo mode uses a local SQLite database only for evaluation. Real email sending still requires SMTP or SES credentials; the application never pretends a message was sent. Environment values are intentionally excluded from Git.
 
+## UI and navigation
+
+Authenticated pages share a persistent workspace layout, so the sidebar and header stay mounted during navigation. Route loading skeletons, automatic link prefetching, hover prefetching and pending indicators provide feedback while fresh data arrives. Forms use shadcn/ui controls and disable submit buttons while their server action is running. Saves show confirmed success; email submission shows **Queued**, with actual provider acceptance recorded separately in **Outbox**.
+
+The interface uses the self-hosted Geist font, shared color tokens, keyboard focus indicators, accessible account menus and a reduced motion preference. Native selects and file inputs retain their existing form behavior.
+
+Dashboard conversation rows have one native link hit area covering the complete row, including empty space. Filter menus open on desktop hover, select on click/Enter, and open on tap on touch devices. Form fields retain native selects. Layouts and typography adapt at phone and tablet widths; wide data tables scroll within their cards.
+
+Team members have profile photos with initials as fallback. Users can upload, replace or remove their own photo from My profile. Uploaded JPEG/PNG/WebP bytes are verified, decoded with a pixel limit, resized to 256×256 and re-encoded as WebP with metadata removed. SVG and animated images are rejected. Photos are served only through an authenticated endpoint, accessible to the owner and administrators, with no shared cache.
+
+## Browser checks
+
+Run `npm run build`, then `npm run test:ui`. The Playwright suite uses installed Google Chrome by default; set `PLAYWRIGHT_CHANNEL=msedge` to use Microsoft Edge. Tests cover persistent navigation, inbox tabs, create and edit flows, role restrictions, bulk read actions, pending email controls, send failures and mobile overflow.
+
+The test server uses port 3100 and creates a unique SQLite file under `.next/` through `DEMO_DATABASE_URL`. Mail credentials point to an isolated SMTP fixture on port 3101, which captures email locally and never delivers it externally. The regular demo database and `.env.local` are not modified. Screenshots and failure traces are written to the ignored `test-results/` directory.
+
+## Outbox and saved drafts
+
+Direct email requests commit the idempotency key, message and outbox job in one database transaction. Next.js `after()` starts a worker after the response, so composing does not wait for the provider. Outbox distinguishes queued, processing, accepted, failed, cancelled and unconfirmed requests. Explicit rejections and preparation failures can be retried. Unconfirmed requests and expired processing leases are marked **Needs review** and are never automatically resent. Accepted jobs clear their stored attachment payload. Resend also receives the stable idempotency key; SMTP cannot guarantee exactly-once delivery after an ambiguous network failure.
+
+The protected `GET /api/jobs/send-outbox` endpoint processes up to two pending jobs per request and recovers expired leases. Call it with `Authorization: Bearer CRON_SECRET` from a frequent external scheduler for durable recovery if a hosting instance stops. The existing daily campaign cron also services the direct outbox. Immediate `after()` processing is the normal path; a daily cron alone is not a timely recovery schedule. Provider timeout, deployment lifetime and scheduler frequency determine recovery time. Configuration changes can require retrying preparation failures from Outbox.
+
+Compose and replies save private drafts to the database after a short typing pause. Draft revisions prevent one browser tab silently overwriting another; the UI shows a conflict if a stale revision is submitted. Draft reads and writes check the owner and assigned mailbox, and queued draft IDs cannot be recreated by a delayed autosave. Files are not autosaved and must be attached again when reopening. An unsaved changes warning protects browser close/reload. Search opens with Ctrl/⌘ K or `/`; `C` composes when outside text fields, and Ctrl/⌘ Enter sends from the composer.
+
+## Analytics and contact identity
+
+The admin Analytics page combines direct and campaign sends, offers date and mailbox filters, daily charts, channel comparisons and recipient drill-down. Charts have accessible data tables. Rates divide unique engaged emails by sent emails, not by raw tracking event count. Recipient history preserves each message ID, including intentional repeat sends to the same normalized email address. The employee dashboard uses only the assigned mailbox. Time buckets are UTC; dashboard charts cover 14 days and the analytics chart accepts up to one year. Recipient history also supports all-time date ranges.
+
+CSV import normalizes and deduplicates email addresses within the file and against existing contacts. It adds new addresses once, skips existing addresses and reports added, skipped and invalid row counts. Existing contact IDs, details, consent and linked message/campaign history are preserved. To change an existing record, edit it explicitly. No existing contact or send history is deleted during import.
+
+## Access controls
+
+Protected pages require a signed, HTTP-only session. Server actions repeat authorization checks, and search, drafts and outbox enforce server-side ownership/mailbox scope. Draft mutation endpoints reject cross-origin requests and sensitive JSON responses use `private, no-store`. Account changes and logout revoke sessions using session versions. Repeated failed sign-ins are throttled in the database; security headers prevent framing and suppress referrer leakage. Email HTML is sanitized, webhook bodies have streaming size limits and webhook/worker endpoints require their configured signatures or secrets. Signed email tracking and unsubscribe links intentionally remain public capabilities; they do not grant access to workspace pages or email content.
+
+These controls and regression tests do not constitute a guarantee that every vulnerability has been eliminated. Live MySQL migrations, hosting configuration and real provider delivery must also be validated in the deployment environment.
+
 ## Real email and analytics test
 
 1. Verify a domain you control in [Resend Domains](https://resend.com/domains) and add the DNS records it provides. Create a **sending access** key in [Resend API Keys](https://resend.com/api-keys), then set `RESEND_API_KEY` in `.env.local`. The direct API is preferred because it returns a provider email ID that the delivery and bounce webhook can match. SMTP remains a fallback for basic sending.

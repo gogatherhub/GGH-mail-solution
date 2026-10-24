@@ -5,12 +5,12 @@ import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { hash } from "bcryptjs";
 import sanitizeHtml from "sanitize-html";
-import Papa from "papaparse";
+import { importContactCsv } from "@/lib/contact-import";
 import { authenticate, logout, requireAdmin, requireUser } from "@/lib/auth";
-import { rows, run, isDemo } from "@/lib/db";
-import { sendMail } from "@/lib/mail";
+import { rows, run } from "@/lib/db";
+import { after } from "next/server";
+import { enqueueEmail, dispatchOutbox } from "@/lib/outbox";
 import { dispatchCampaignBatch } from "@/lib/campaign-dispatch";
-import { trackedDirectHtml } from "@/lib/tracking";
 
 const val = (form: FormData, key: string) => String(form.get(key) || "").trim();
 const selectedIds=(form:FormData)=>[...new Set(form.getAll("ids").map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))].slice(0,100);
@@ -35,33 +35,34 @@ export async function saveContact(form: FormData) {
   const name = val(form, "name"), email = val(form, "email").toLowerCase();
   const kind = val(form, "kind");
   if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !["client", "vendor", "planner"].includes(kind)) throw new Error("Invalid contact");
+  const [existing] = await rows("SELECT id FROM contacts WHERE LOWER(TRIM(email))=? AND id<>? ORDER BY id LIMIT 1",[email,id||0]);
+  if (existing) redirect(id?`/contacts/${id}?contact_error=duplicate`:`/contacts/${existing.id}?notice=contact_exists`);
   const args = [name, email, val(form, "company"), kind, val(form, "phone"), val(form, "tags"), form.get("consent") ? 1 : 0];
   if (id) await run("UPDATE contacts SET name=?,email=?,company=?,kind=?,phone=?,tags=?,consent=? WHERE id=?", [...args, id]);
   else await run("INSERT INTO contacts (name,email,company,kind,phone,tags,consent) VALUES (?,?,?,?,?,?,?)", args);
-  revalidatePath("/contacts"); redirect("/contacts");
+  revalidatePath("/contacts"); redirect("/contacts?notice=contact_saved");
 }
 
-export async function importContacts(form:FormData){
-  await requireAdmin();const file=form.get("file");if(!(file instanceof File)||file.size>2*1024*1024)throw new Error("Upload a CSV under 2 MB");
-  const parsed=Papa.parse<Record<string,string>>(await file.text(),{header:true,skipEmptyLines:true});
-  if(parsed.errors.length||parsed.data.length>5000)throw new Error("Invalid CSV or more than 5000 rows");
-  for(const item of parsed.data){const email=(item.email||"").trim().toLowerCase(),kind=(item.kind||"").trim().toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)||!["client","vendor","planner"].includes(kind))continue;const consent=["yes","true","1"].includes((item.consent||"").trim().toLowerCase())?1:0;
-    await run(isDemo?"INSERT INTO contacts (name,email,company,kind,phone,tags,consent) VALUES (?,?,?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,company=excluded.company,kind=excluded.kind,phone=excluded.phone,tags=excluded.tags,consent=CASE WHEN excluded.consent=1 THEN 1 ELSE contacts.consent END":"INSERT INTO contacts (name,email,company,kind,phone,tags,consent) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),company=VALUES(company),kind=VALUES(kind),phone=VALUES(phone),tags=VALUES(tags),consent=CASE WHEN VALUES(consent)=1 THEN 1 ELSE contacts.consent END",[(item.name||email).trim().slice(0,200),email,(item.company||"").trim(),kind,(item.phone||"").trim(),(item.tags||"").trim(),consent]);
-  }
-  revalidatePath("/contacts");redirect("/contacts");
+export async function importContacts(form: FormData) {
+  await requireAdmin();
+  const file = form.get("file");
+  if (!(file instanceof File) || file.size>2*1024*1024) throw new Error("Upload a CSV under 2 MB");
+  const result = await importContactCsv(await file.text());
+  revalidatePath("/contacts");
+  redirect(`/contacts?imported=${result.inserted}&duplicates=${result.duplicates}&invalid=${result.invalid}`);
 }
-
 export async function saveUser(form: FormData) {
   await requireAdmin();
   const id = Number(val(form, "id")), username = val(form, "username"), password = val(form, "password");
   const role = val(form, "role");
   if (!username || !["admin", "employee"].includes(role) || (!id && !password)) throw new Error("Invalid user");
+  if (password && password.length<12) throw new Error("Use a password with at least 12 characters");
   const args = [username, val(form, "name"), val(form, "email"), val(form, "phone"), val(form, "department"), val(form, "job_role"), role, Number(val(form, "assigned_mailbox_id")) || null];
   if (id) {
     await run("UPDATE users SET username=?,name=?,email=?,phone=?,department=?,job_role=?,role=?,assigned_mailbox_id=?,session_version=session_version+1 WHERE id=?", [...args, id]);
     if (password) await run("UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?", [await hash(password, 12), id]);
   } else await run("INSERT INTO users (username,name,email,phone,department,job_role,role,assigned_mailbox_id,password_hash) VALUES (?,?,?,?,?,?,?,?,?)", [...args, await hash(password, 12)]);
-  revalidatePath("/users"); redirect("/users");
+  revalidatePath("/users"); redirect(`/users?notice=${id ? "user_updated" : "user_created"}`);
 }
 
 export async function saveMailbox(form: FormData) {
@@ -72,7 +73,7 @@ export async function saveMailbox(form: FormData) {
   const args = [val(form, "display_name"), val(form, "type"), Number(val(form, "quota_mb")) || 5120, form.get("catch_all") ? 1 : 0, val(form, "status") || "active"];
   if (id) await run("UPDATE mailboxes SET display_name=?,type=?,quota_mb=?,catch_all=?,status=? WHERE id=?", [...args, id]);
   else await run("INSERT INTO mailboxes (email,display_name,type,quota_mb,catch_all,status) VALUES (?,?,?,?,?,?)", [email, ...args]);
-  revalidatePath("/email-accounts"); redirect("/email-accounts");
+  revalidatePath("/email-accounts"); redirect("/email-accounts?notice=mailbox_saved");
 }
 
 export async function saveCampaign(form: FormData) {
@@ -82,7 +83,7 @@ export async function saveCampaign(form: FormData) {
   if (!name || !subject || !body || !["client", "vendor", "planner"].includes(segment) || !mailbox) throw new Error("Complete all campaign fields");
   if (user.role !== "admin" && Number(user.assigned_mailbox_id) !== mailbox) throw new Error("Mailbox access denied");
   await run("INSERT INTO campaigns (name,subject,body_html,segment,mailbox_id,created_by) VALUES (?,?,?,?,?,?)", [name, subject, body, segment, mailbox, Number(user.id)]);
-  revalidatePath("/campaigns"); redirect("/campaigns");
+  revalidatePath("/campaigns"); redirect("/campaigns?notice=campaign_saved");
 }
 
 export async function queueCampaign(form: FormData) {
@@ -121,52 +122,28 @@ export async function sendConversation(form: FormData) {
   const user = await requireUser();
   const mailboxId = Number(val(form, "mailbox_id"));
   if (user.role !== "admin" && Number(user.assigned_mailbox_id) !== mailboxId) throw new Error("Mailbox access denied");
-  const mailbox = (await rows("SELECT email FROM mailboxes WHERE id=? AND status='active'", [mailboxId]))[0];
-  if (!mailbox) throw new Error("Select an active mailbox");
-  const to = val(form, "to").toLowerCase(), subject = val(form, "subject"), body = clean(val(form, "body_html"));
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to) || !subject || !body) throw new Error("Complete message fields");
-  const files=form.getAll("attachments").filter((f):f is File=>f instanceof File&&f.size>0);
-  if(files.length>5||files.some(f=>f.size>10*1024*1024)||files.reduce((n,f)=>n+f.size,0)>20*1024*1024)throw new Error("Attach up to 5 files, 10 MB each and 20 MB total");
-  const suppliedKey=val(form,"idempotency_key");
-  const idempotencyKey=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(suppliedKey)?suppliedKey:randomUUID();
-  const claim=await run(isDemo?"INSERT OR IGNORE INTO send_attempts (idempotency_key,user_id) VALUES (?,?)":"INSERT IGNORE INTO send_attempts (idempotency_key,user_id) VALUES (?,?)",[idempotencyKey,Number(user.id)]);
-  if(!claim.rowsAffected){
-    const [existing]=await rows("SELECT conversation_id,status FROM send_attempts WHERE idempotency_key=? AND user_id=?",[idempotencyKey,Number(user.id)]);
-    if(existing?.conversation_id)redirect(`/conversations/${existing.conversation_id}${existing.status==="failed"?"?send_error=provider":""}`);
-    redirect("/conversations?send_status=processing");
+  const to = val(form, "to").toLowerCase(), subject = val(form, "subject").slice(0,500), body = clean(val(form, "body_html"));
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to) || !subject || !body || body.length > 400_000) throw new Error("Complete message fields");
+  for (const field of ["cc", "bcc"]) {
+    const addresses = val(form, field).split(",").map(value => value.trim()).filter(Boolean);
+    if (addresses.length > 50 || addresses.some(address => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address))) throw new Error("Invalid copy recipients");
   }
-  const attachments=await Promise.all(files.map(async f=>({filename:f.name.replace(/[^\w. -]/g,"_").slice(0,120),content:Buffer.from(await f.arrayBuffer()),contentType:f.type||"application/octet-stream"})));
-  const contact = (await rows("SELECT id FROM contacts WHERE email=?", [to]))[0];
-  let contactId = contact?.id;
-  if (!contactId) { const created = await run("INSERT INTO contacts (name,email,kind) VALUES (?,?,?)", [val(form,"name").slice(0,200)||to, to, "client"]); contactId = Number(created.lastInsertRowid); }
-  const existingId = Number(val(form, "conversation_id"));
-  let conversationId = existingId;
-  if (existingId) {
-    const existing = (await rows("SELECT co.mailbox_id,ct.email contact_email FROM conversations co JOIN contacts ct ON ct.id=co.contact_id WHERE co.id=?", [existingId]))[0];
-    if (!existing || Number(existing.mailbox_id) !== mailboxId) throw new Error("Conversation unavailable");
-    if(String(existing.contact_email).toLowerCase()!==to)throw new Error("Reply recipient does not match this conversation");
-  } else { const created = await run("INSERT INTO conversations (mailbox_id,contact_id,subject) VALUES (?,?,?)", [mailboxId, Number(contactId), subject]); conversationId = Number(created.lastInsertRowid); }
-  const message = await run("INSERT INTO messages (conversation_id,direction,sender,recipient,cc,bcc,subject,body_html) VALUES (?,?,?,?,?,?,?,?)", [conversationId, "outbound", String(mailbox.email), to, val(form, "cc"), val(form, "bcc"), subject, body]);
-  await run("UPDATE send_attempts SET conversation_id=?,message_id=? WHERE idempotency_key=?",[conversationId,Number(message.lastInsertRowid),idempotencyKey]);
-  let providerId: string | undefined;
-  try {
-    const html=trackedDirectHtml(body,Number(message.lastInsertRowid));
-    providerId = await sendMail({ from: String(mailbox.email), to, cc: val(form, "cc"), bcc: val(form, "bcc"), subject, html,attachments,idempotencyKey });
-  } catch (error) {
-    console.error("Email provider send failed:", error instanceof Error ? error.name : "UNKNOWN");
-    await run("UPDATE messages SET status='failed' WHERE id=?", [Number(message.lastInsertRowid)]);
-    await run("UPDATE send_attempts SET status='failed' WHERE idempotency_key=?",[idempotencyKey]);
-    revalidatePath("/conversations");revalidatePath(`/conversations/${conversationId}`);revalidatePath(`/contacts/${contactId}`);
-    const reason=String(mailbox.email).toLowerCase().endsWith("@gmail.com")?"gmail_sender":error instanceof Error&&error.message.includes("APP_URL")?"config":"provider";
-    redirect(`/conversations/${conversationId}?send_error=${reason}`);
-  }
-  await run("UPDATE messages SET status='sent',provider_id=? WHERE id=?", [providerId, Number(message.lastInsertRowid)]);
-  await run("UPDATE send_attempts SET status='sent' WHERE idempotency_key=?",[idempotencyKey]);
-  await run("UPDATE messages SET status='read' WHERE conversation_id=? AND direction='inbound'",[conversationId]);
-  await run("UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP,unread=0 WHERE id=?", [conversationId]);
-  revalidatePath("/conversations");revalidatePath(`/conversations/${conversationId}`);revalidatePath("/dashboard");revalidatePath(`/contacts/${contactId}`); redirect(`/conversations/${conversationId}`);
+  const files = form.getAll("attachments").filter((file): file is File => file instanceof File && file.size > 0);
+  if (files.length > 5 || files.some(file => file.size > 10*1024*1024) || files.reduce((size,file) => size+file.size,0) > 20*1024*1024) throw new Error("Attach up to 5 files, 10 MB each and 20 MB total");
+  const suppliedKey = val(form, "idempotency_key");
+  const key = /^[0-9a-f-]{36}$/i.test(suppliedKey) ? suppliedKey : randomUUID();
+  const draftId = val(form, "draft_id");
+  if (draftId && draftId !== key) throw new Error("Draft request mismatch");
+  const attachments = await Promise.all(files.map(async file => ({ filename: file.name.replace(/[^\w. -]/g,"_").slice(0,120), content: Buffer.from(await file.arrayBuffer()).toString("base64"), contentType: file.type || "application/octet-stream" })));
+  const queued = await enqueueEmail({ user, mailboxId, to, name: val(form,"name").slice(0,200), subject, body, cc: val(form,"cc"), bcc: val(form,"bcc"), conversationId: Number(val(form,"conversation_id")) || 0, key, draftId, attachments });
+  if (queued.jobId) after(async () => {
+    try { await dispatchOutbox(queued.jobId); }
+    catch { console.error("Outbox worker interrupted; queued email remains available for review."); }
+    revalidatePath("/outbox"); revalidatePath("/contacts"); revalidatePath("/conversations"); revalidatePath(`/conversations/${queued.conversationId}`); revalidatePath("/dashboard"); revalidatePath("/analytics");
+  });
+  revalidatePath("/outbox"); revalidatePath("/drafts"); revalidatePath("/conversations");
+  redirect(`/outbox?notice=${queued.repeated ? "email_already_queued" : "email_queued"}`);
 }
-
 export async function setRead(form: FormData) {
   const user = await requireUser(); const id = Number(val(form, "id")); const unread = val(form, "unread") === "1" ? 1 : 0;
   const item = (await rows("SELECT c.mailbox_id,(SELECT m.direction FROM messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_direction FROM conversations c WHERE c.id=?", [id]))[0];
@@ -184,6 +161,7 @@ export async function bulkConversations(form:FormData){
     if(action==="delete"){
       await run("DELETE FROM email_events WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?)",[id]);
       await run("DELETE FROM send_attempts WHERE conversation_id=?",[id]);
+      await run("DELETE FROM email_outbox WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?)",[id]);
       await run("DELETE FROM messages WHERE conversation_id=?",[id]);
       await run("DELETE FROM conversations WHERE id=?",[id]);
     }
@@ -221,4 +199,4 @@ export async function bulkDeleteContacts(form:FormData){
   revalidatePath("/contacts");redirect(blocked.size?"/contacts?bulk_notice=in_use":"/contacts");
 }
 
-export async function updateProfile(form:FormData){const user=await requireUser(),name=val(form,"name"),email=val(form,"email"),phone=val(form,"phone"),password=val(form,"password");if(!name)throw new Error("Name is required");await run("UPDATE users SET name=?,email=?,phone=? WHERE id=?",[name,email,phone,Number(user.id)]);if(password){await run("UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?",[await hash(password,12),Number(user.id)]);await logout()}revalidatePath("/profile");redirect(password?"/login":"/profile")}
+export async function updateProfile(form:FormData){const user=await requireUser(),name=val(form,"name"),email=val(form,"email"),phone=val(form,"phone"),password=val(form,"password");if(!name)throw new Error("Name is required");if(password&&password.length<12)throw new Error("Use a password with at least 12 characters");await run("UPDATE users SET name=?,email=?,phone=? WHERE id=?",[name,email,phone,Number(user.id)]);if(password){await run("UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?",[await hash(password,12),Number(user.id)]);await logout()}revalidatePath("/profile");redirect(password?"/login":"/profile?notice=profile_saved")}

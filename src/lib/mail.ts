@@ -4,12 +4,19 @@ import { signature } from "./tracking";
 import { Resend } from "resend";
 import { appOrigin } from "./app-url";
 
+export class MailRejectedError extends Error {}
+
 export async function sendMail(input: { from: string; to: string; subject: string; html: string; cc?: string; bcc?: string; campaignId?: number; recipientId?: number; idempotencyKey?: string; attachments?: { filename: string; content: Buffer; contentType: string }[] }) {
   const unsubscribe = input.recipientId ? `${appOrigin()}/unsubscribe/${input.recipientId}?sig=${signature(input.recipientId,"unsubscribe")}` : undefined;
   if(process.env.RESEND_API_KEY){
     const resend=new Resend(process.env.RESEND_API_KEY);
     const {data,error}=await resend.emails.send({from:input.from,to:input.to,cc:input.cc?input.cc.split(",").map(x=>x.trim()).filter(Boolean):undefined,bcc:input.bcc?input.bcc.split(",").map(x=>x.trim()).filter(Boolean):undefined,subject:input.subject,html:input.html,attachments:input.attachments?.map(a=>({filename:a.filename,content:a.content,contentType:a.contentType})),headers:unsubscribe?{"List-Unsubscribe":`<${unsubscribe}>`,"List-Unsubscribe-Post":"List-Unsubscribe=One-Click"}:undefined,tags:input.campaignId&&input.recipientId?[{name:"campaign_id",value:String(input.campaignId)},{name:"recipient_id",value:String(input.recipientId)}]:undefined},input.recipientId?{idempotencyKey:`campaign-recipient-${input.recipientId}`}:input.idempotencyKey?{idempotencyKey:input.idempotencyKey}:{});
-    if(error||!data?.id)throw new Error(error?.message||"Resend did not return an email ID");
+    if(error){
+      const status=Number((error as {statusCode?:number}).statusCode);
+      if([400,401,403,404,422,429].includes(status))throw new MailRejectedError("Provider rejected this email");
+      throw new Error("Provider did not confirm email acceptance");
+    }
+    if(!data?.id)throw new Error("Resend did not return an email ID");
     return data.id;
   }
   if (process.env.AWS_REGION) {
@@ -24,7 +31,7 @@ export async function sendMail(input: { from: string; to: string; subject: strin
     return result.MessageId || "";
   }
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD) {
-    const transport = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: Number(process.env.SMTP_PORT || 587) === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD } });
+    const transport = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: Number(process.env.SMTP_PORT || 587) === 465, connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 20000, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD } });
     const result = await transport.sendMail({ from: input.from, to: input.to, cc: input.cc, bcc: input.bcc, subject: input.subject, html: input.html, attachments: input.attachments, headers: unsubscribe ? { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined });
     return result.messageId as string;
   }

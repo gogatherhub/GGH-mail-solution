@@ -1,30 +1,10 @@
-import Link from "next/link";
-import { Mail } from "lucide-react";
-
-const pages = [
-  ["/dashboard", "Dashboard"],
-  ["/conversations", "Conversations"],
-  ["/contacts", "Contacts"],
-  ["/campaigns", "Campaigns"],
-  ["/users", "Users"],
-  ["/email-accounts", "Email accounts"],
-] as const;
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function PageLoading({ title }: { title: string }) {
-  return <div className="app-shell" aria-busy="true">
-    <aside className="sidebar">
-      <Link className="brand" href="/dashboard"><span className="brand-mark"><Mail size={20}/></span><span>Welfog<span className="brand-muted">mail</span></span></Link>
-      <div className="workspace-label">WORKSPACE</div>
-      <nav className="side-nav">{pages.map(([href,label])=><Link href={href} key={href}>{label}</Link>)}</nav>
-    </aside>
-    <main className="main">
-      <header className="topbar"><span>Welfog / <strong>{title}</strong></span></header>
-      <div className="page page-loading" role="status" aria-label={`Loading ${title}`}>
-        <div className="loading-line loading-title"/>
-        <div className="loading-line loading-subtitle"/>
-        <div className="loading-cards">{[0,1,2,3].map(x=><div className="loading-card" key={x}/>)}</div>
-        <div className="loading-table">{[0,1,2,3,4].map(x=><div className="loading-line loading-row" key={x}/>)}</div>
-      </div>
-    </main>
+  return <div className="page page-loading" role="status" aria-label={`Loading ${title}`} aria-busy="true">
+    <span className="sr-only">Loading {title}…</span>
+    <div className="page-heading"><div><Skeleton className="h-8 w-52"/><Skeleton className="mt-3 h-4 w-72 max-w-full"/></div><Skeleton className="h-10 w-32"/></div>
+    <div className="loading-cards">{[0,1,2,3].map(x => <Skeleton className="h-36 rounded-xl" key={x}/>)}</div>
+    <div className="card loading-table"><Skeleton className="mb-7 h-9 w-64 max-w-full"/>{[0,1,2,3,4].map(x => <div className="loading-table-row" key={x}><Skeleton className="size-9 rounded-xl"/><Skeleton className="h-4 w-1/3"/><Skeleton className="ml-auto h-5 w-20 rounded-full"/></div>)}</div>
   </div>;
 }

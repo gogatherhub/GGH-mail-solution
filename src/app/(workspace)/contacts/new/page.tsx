@@ -1,0 +1,6 @@
+import { Input } from "@/components/ui/input";
+import { SubmitButton } from "@/components/submit-button";
+import { Shell } from "@/components/shell";
+import { saveContact } from "@/app/actions";
+import { requireAdmin } from "@/lib/auth";
+export default async function NewContact() { await requireAdmin(); return <Shell title="Add contact" subtitle="Build a clean, permission-based audience"><form action={saveContact} className="card form-card"><div className="form-grid"><label>Name<Input name="name" required placeholder="Full name"/></label><label>Email<Input name="email" type="email" required placeholder="name@example.com"/></label><label>Category<select name="kind"><option value="client">Client</option><option value="vendor">Vendor</option><option value="planner">Planner</option></select></label><label>Company<Input name="company" placeholder="Company or organization"/></label><label>Phone<Input name="phone" placeholder="Phone number"/></label><label>Tags<Input name="tags" placeholder="Comma separated tags"/></label></div><label className="check"><input type="checkbox" name="consent"/> This contact has agreed to receive campaign emails.</label><div className="form-actions"><SubmitButton className="button primary">Save contact</SubmitButton></div></form></Shell>; }

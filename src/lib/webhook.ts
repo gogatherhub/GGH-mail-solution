@@ -6,13 +6,17 @@ export function validWebhookSecret(provided:string|null,expected:string|undefine
   return a.length===b.length&&timingSafeEqual(a,b);
 }
 
-export async function readLimitedJson(request:Request,maxBytes:number){
+export async function readLimitedText(request:Request,maxBytes:number){
   const declared=Number(request.headers.get("content-length")||0);
   if(declared>maxBytes)throw new Error("Payload too large");
   const reader=request.body?.getReader();if(!reader)throw new Error("Empty payload");
   const chunks:Uint8Array[]=[];let size=0;
   while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>maxBytes){await reader.cancel();throw new Error("Payload too large")}chunks.push(value)}
-  const json=JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+export async function readLimitedJson(request:Request,maxBytes:number){
+  const json=JSON.parse(await readLimitedText(request,maxBytes));
   if(!json||typeof json!=="object"||Array.isArray(json))throw new Error("Invalid payload");
   return json as Record<string,unknown>;
 }

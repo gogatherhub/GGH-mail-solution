@@ -8,7 +8,7 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{id:strin
   const {id,type}=await params; const url=request.nextUrl.searchParams.get("url")||""; const target=type==="open"?"open":url; const sig=request.nextUrl.searchParams.get("sig")||"";
   if(/^m[1-9]\d*$/.test(id)){
     const messageId=Number(id.slice(1)),expected=signature(id,target);
-    if(!Number.isSafeInteger(messageId)||sig.length!==expected.length||!timingSafeEqual(Buffer.from(sig),Buffer.from(expected)))return new NextResponse("Invalid link",{status:403});
+    if(!Number.isSafeInteger(messageId)||messageId<1||!/^[0-9a-f]{64}$/.test(sig)||!timingSafeEqual(Buffer.from(sig),Buffer.from(expected)))return new NextResponse("Invalid link",{status:403});
     const message=(await rows("SELECT id FROM messages WHERE id=? AND direction='outbound'",[messageId]))[0];
     if(!message)return new NextResponse("Not found",{status:404});
     if(type==="open"){
@@ -25,7 +25,7 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{id:strin
     return new NextResponse("Not found",{status:404});
   }
   const rid=Number(id),expected=signature(rid,target);
-  if(!Number.isSafeInteger(rid)||rid<1||sig.length!==expected.length||!timingSafeEqual(Buffer.from(sig),Buffer.from(expected)))return new NextResponse("Invalid link",{status:403});
+  if(!Number.isSafeInteger(rid)||rid<1||!/^[0-9a-f]{64}$/.test(sig)||!timingSafeEqual(Buffer.from(sig),Buffer.from(expected)))return new NextResponse("Invalid link",{status:403});
   const recipient=(await rows("SELECT id FROM campaign_recipients WHERE id=?",[rid]))[0]; if(!recipient)return new NextResponse("Not found",{status:404});
   if(type==="open"){
     await run("UPDATE campaign_recipients SET opened_at=COALESCE(opened_at,CURRENT_TIMESTAMP) WHERE id=?",[rid]); await run("INSERT INTO email_events (recipient_id,type) VALUES (?,'open')",[rid]);

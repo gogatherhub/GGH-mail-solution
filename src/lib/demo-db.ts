@@ -1,10 +1,11 @@
 import { createClient, type Client } from "@libsql/client";
 import { hash } from "bcryptjs";
+import type { DbSession, Row } from "./db";
 
 let ready: Promise<Client> | undefined;
 
 async function initialize() {
-  const client = createClient({ url: "file:./welfog-demo.db" });
+  const client = createClient({ url: process.env.DEMO_DATABASE_URL || "file:./welfog-demo.db" });
   const schema = [
     "CREATE TABLE IF NOT EXISTS mailboxes (id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL,type TEXT DEFAULT 'General',quota_mb INTEGER DEFAULT 5120,catch_all INTEGER DEFAULT 0,status TEXT DEFAULT 'active',created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,name TEXT NOT NULL,email TEXT,phone TEXT,department TEXT,job_role TEXT DEFAULT 'Employee',role TEXT NOT NULL DEFAULT 'employee',assigned_mailbox_id INTEGER,session_version INTEGER NOT NULL DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
@@ -16,6 +17,15 @@ async function initialize() {
     "CREATE TABLE IF NOT EXISTS email_events (id INTEGER PRIMARY KEY AUTOINCREMENT,recipient_id INTEGER,message_id INTEGER,type TEXT NOT NULL,url TEXT,provider_event_id TEXT UNIQUE,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS suppressions (email TEXT NOT NULL PRIMARY KEY,reason TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS send_attempts (idempotency_key TEXT NOT NULL PRIMARY KEY,user_id INTEGER NOT NULL,conversation_id INTEGER,message_id INTEGER,status TEXT NOT NULL DEFAULT 'processing',created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE TABLE IF NOT EXISTS email_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT,message_id INTEGER NOT NULL UNIQUE,user_id INTEGER NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,payload_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',attempts INTEGER NOT NULL DEFAULT 0,last_error TEXT,locked_at TEXT,sent_at TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE INDEX IF NOT EXISTS idx_outbox_status ON email_outbox(status,created_at)",
+    "CREATE TABLE IF NOT EXISTS email_drafts (id TEXT NOT NULL PRIMARY KEY,user_id INTEGER NOT NULL,payload_json TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE INDEX IF NOT EXISTS idx_drafts_user ON email_drafts(user_id,updated_at)",
+    "CREATE TABLE IF NOT EXISTS auth_throttles (key_hash TEXT NOT NULL PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 1,window_started INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS user_avatars (user_id INTEGER NOT NULL PRIMARY KEY,image_data TEXT NOT NULL,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE INDEX IF NOT EXISTS idx_demo_events_message ON email_events(message_id,type)",
+    "CREATE INDEX IF NOT EXISTS idx_demo_messages_conversation ON messages(conversation_id,id)",
+    "CREATE INDEX IF NOT EXISTS idx_demo_contacts_normalized_email ON contacts(LOWER(TRIM(email)))",
   ];
   for (const sql of schema) await client.execute(sql);
   const existing = await client.execute("SELECT COUNT(*) AS n FROM users");
@@ -53,4 +63,17 @@ export async function demoRows(sql: string, args: Arg[] = []) {
 export async function demoRun(sql: string, args: Arg[] = []) {
   const result = await (await demoClient()).execute({ sql: sqliteSql(sql), args });
   return { lastInsertRowid: Number(result.lastInsertRowid || 0), rowsAffected: result.rowsAffected };
+}
+
+export async function demoTransaction<T>(work: (session: DbSession) => Promise<T>): Promise<T> {
+  const tx = await (await demoClient()).transaction("write");
+  try {
+    const result = await work({
+      rows: async (sql, args = []) => { const result = await tx.execute({ sql: sqliteSql(sql), args }); return result.rows.map(row => Object.fromEntries(Object.entries(row).map(([key,value]) => [key, typeof value === "bigint" ? Number(value) : value]))) as Row[]; },
+      run: async (sql, args = []) => { const result = await tx.execute({ sql: sqliteSql(sql), args }); return { lastInsertRowid: Number(result.lastInsertRowid || 0), rowsAffected: result.rowsAffected }; },
+    });
+    await tx.commit();
+    return result;
+  } catch (error) { await tx.rollback(); throw error; }
+  finally { tx.close(); }
 }
