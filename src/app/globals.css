@@ -361,6 +361,25 @@
   .profile-photo-preview { @apply size-24 rounded-2xl border-[#d8cff5] bg-[#e9e1fc] text-3xl text-brand; }
   .profile-photo-form label { @apply mb-2 block text-[13px] font-medium; }
   .profile-photo-form input { @apply w-full max-w-[350px]; }
+  .sending-budget { @apply mb-5 rounded-xl border border-[#d9d1f0] bg-[#f7f3ff] p-5; }
+  .budget-heading { @apply flex flex-wrap items-center justify-between gap-3 text-[13px] text-[#5b487f]; }
+  .budget-heading > span { @apply flex items-center gap-2 font-medium; }
+  .budget-heading > strong { @apply rounded-md bg-white px-3 py-1.5 text-brand tabular-nums; }
+  .budget-metrics { @apply mt-4 grid grid-cols-4 gap-4; }
+  .budget-metrics > div { @apply grid gap-1; }
+  .budget-metrics strong { @apply text-[22px] font-semibold text-[#493296] tabular-nums; }
+  .budget-metrics span { @apply text-[11px] leading-relaxed text-[#77628e]; }
+  .budget-track { @apply mt-4 h-1.5 overflow-hidden rounded-full bg-[#e4dcf5]; }
+  .budget-track > span { @apply block h-full rounded-full bg-[#7861d4] transition-[width] duration-150; }
+  .sending-budget p { @apply mt-3 text-[11px] leading-relaxed text-[#7d6d94]; }
+  .budget-warning { @apply flex items-center gap-2 text-xs leading-relaxed text-[#a16c20]; }
+  .campaign-send-controls { @apply mb-6; }
+  .campaign-count-form { @apply grid gap-4 rounded-xl border border-line bg-white p-5; }
+  .campaign-count-form label { @apply text-sm font-medium; }
+  .campaign-count-form p { @apply mt-1.5 text-xs leading-relaxed text-subtle; }
+  .campaign-count-picker { @apply flex flex-wrap items-center gap-3; }
+  .campaign-count-picker > input { @apply w-24; }
+  .count-presets { @apply flex flex-wrap gap-2; }
 }
 
 @media (max-height: 1050px) and (min-width: 761px) {
@@ -452,6 +471,9 @@
   .profile-photo-form { @apply items-start gap-4 p-4; }
   .profile-photo-preview { @apply size-16 rounded-xl text-2xl; }
   .profile-photo-form > div { @apply min-w-0 flex-1; }
+  .budget-metrics { @apply grid-cols-2; }
+  .sending-budget { @apply p-4; }
+  .campaign-count-picker { @apply gap-2; }
 }
 @media (max-width: 480px) {
   .page-heading { @apply flex-wrap; }

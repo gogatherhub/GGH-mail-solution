@@ -6,6 +6,8 @@ let ready: Promise<Client> | undefined;
 
 async function initialize() {
   const client = createClient({ url: process.env.DEMO_DATABASE_URL || "file:./welfog-demo.db" });
+  await client.execute("PRAGMA journal_mode=WAL");
+  await client.execute("PRAGMA busy_timeout=5000");
   const schema = [
     "CREATE TABLE IF NOT EXISTS mailboxes (id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL,type TEXT DEFAULT 'General',quota_mb INTEGER DEFAULT 5120,catch_all INTEGER DEFAULT 0,status TEXT DEFAULT 'active',created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,name TEXT NOT NULL,email TEXT,phone TEXT,department TEXT,job_role TEXT DEFAULT 'Employee',role TEXT NOT NULL DEFAULT 'employee',assigned_mailbox_id INTEGER,session_version INTEGER NOT NULL DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
@@ -23,6 +25,9 @@ async function initialize() {
     "CREATE INDEX IF NOT EXISTS idx_drafts_user ON email_drafts(user_id,updated_at)",
     "CREATE TABLE IF NOT EXISTS auth_throttles (key_hash TEXT NOT NULL PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 1,window_started INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS user_avatars (user_id INTEGER NOT NULL PRIMARY KEY,image_data TEXT NOT NULL,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE TABLE IF NOT EXISTS email_budget_days (day_key TEXT NOT NULL PRIMARY KEY)",
+    "CREATE TABLE IF NOT EXISTS email_send_reservations (send_key TEXT NOT NULL PRIMARY KEY,day_key TEXT NOT NULL,channel TEXT NOT NULL,recipient_count INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'reserved',created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE INDEX IF NOT EXISTS idx_reservations_day ON email_send_reservations(day_key,status)",
     "CREATE INDEX IF NOT EXISTS idx_demo_events_message ON email_events(message_id,type)",
     "CREATE INDEX IF NOT EXISTS idx_demo_messages_conversation ON messages(conversation_id,id)",
     "CREATE INDEX IF NOT EXISTS idx_demo_contacts_normalized_email ON contacts(LOWER(TRIM(email)))",

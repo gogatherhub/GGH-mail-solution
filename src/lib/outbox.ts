@@ -2,6 +2,8 @@ import { rows, run, transaction, isDemo, type Row } from "./db";
 import { MailRejectedError, sendMail } from "./mail";
 import { sendingConfigError } from "./campaign-dispatch";
 import { trackedDirectHtml } from "./tracking";
+import { reserveSends, renewSend, settleSend } from "./send-budget";
+import { recipientCount } from "./send-limits";
 
 type Attachment = { filename: string; content: string; contentType: string };
 type QueueInput = { user: Row; mailboxId: number; to: string; name: string; subject: string; body: string; cc: string; bcc: string; conversationId: number; key: string; draftId: string; attachments: Attachment[] };
@@ -36,6 +38,7 @@ export async function enqueueEmail(input: QueueInput) {
       conversationId = created.lastInsertRowid;
     }
     const message = await tx.run("INSERT INTO messages (conversation_id,direction,sender,recipient,cc,bcc,subject,body_html,status) VALUES (?,'outbound',?,?,?,?,?,?,'queued')", [conversationId, String(mailbox.email), input.to, input.cc, input.bcc, input.subject, input.body]);
+    await reserveSends(tx,[{key:`direct:${message.lastInsertRowid}`,channel:"direct",count:recipientCount(input.cc,input.bcc)}]);
     const job = await tx.run("INSERT INTO email_outbox (message_id,user_id,idempotency_key,payload_json) VALUES (?,?,?,?)", [message.lastInsertRowid, Number(input.user.id), input.key, JSON.stringify({ attachments: input.attachments })]);
     await tx.run("UPDATE send_attempts SET conversation_id=?,message_id=?,status='queued' WHERE idempotency_key=?", [conversationId, message.lastInsertRowid, input.key]);
     if (input.draftId) await tx.run("DELETE FROM email_drafts WHERE id=? AND user_id=?", [input.draftId, Number(input.user.id)]);
@@ -66,10 +69,15 @@ export async function dispatchOutbox(jobId?: number) {
       if (configError) throw new Error(configError);
       const payload = JSON.parse(String(job.payload_json)) as { attachments?: Attachment[] };
       const html = trackedDirectHtml(String(job.body_html), Number(job.message_id));
+      if(!await renewSend({key:`direct:${job.message_id}`,channel:"direct",count:recipientCount(String(job.cc||""),String(job.bcc||""))})){
+        await run("UPDATE email_outbox SET status='queued',last_error='Daily capacity is full. This email will wait for the next worker after reset.' WHERE id=?",[id]);
+        continue;
+      }
       providerStarted = true;
       const providerId = await sendMail({ from: String(job.sender), to: String(job.recipient), subject: String(job.subject), cc: String(job.cc || ""), bcc: String(job.bcc || ""), html, idempotencyKey: String(job.idempotency_key), attachments: (payload.attachments || []).map(a => ({ ...a, content: Buffer.from(a.content, "base64") })) });
       if (!providerId) throw new Error("Provider did not confirm acceptance");
       await transaction(async tx => {
+        await settleSend(tx,`direct:${job.message_id}`,"sent");
         await tx.run("UPDATE messages SET status=CASE WHEN status IN ('queued','failed','needs_review') THEN 'sent' ELSE status END,provider_id=? WHERE id=?", [providerId, Number(job.message_id)]);
         await tx.run("UPDATE email_outbox SET status='sent',sent_at=CURRENT_TIMESTAMP,last_error=NULL,payload_json='{}' WHERE id=?", [id]);
         await tx.run("UPDATE send_attempts SET status='sent' WHERE idempotency_key=?", [String(job.idempotency_key)]);
@@ -83,6 +91,7 @@ export async function dispatchOutbox(jobId?: number) {
       const status = providerStarted&&!rejected ? "needs_review" : "failed";
       const message = providerStarted ? rejected?"Provider rejected this email. Check the sender, recipient and mail settings before retrying.":"Provider acceptance could not be confirmed. Check the provider before sending again." : error instanceof Error ? error.message.slice(0,400) : "Unable to prepare email";
       await transaction(async tx => {
+        if(!providerStarted||rejected)await settleSend(tx,`direct:${job.message_id}`,"released");
         await tx.run("UPDATE email_outbox SET status=?,last_error=? WHERE id=?", [status, message, id]);
         await tx.run("UPDATE messages SET status=? WHERE id=? AND status='queued'", [status, Number(job.message_id)]);
         await tx.run("UPDATE send_attempts SET status=? WHERE idempotency_key=?", [status, String(job.idempotency_key)]);

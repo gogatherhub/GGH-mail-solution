@@ -29,11 +29,13 @@ async function initialize() {
     `CREATE TABLE IF NOT EXISTS email_drafts (id CHAR(36) NOT NULL PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, payload_json MEDIUMTEXT NOT NULL, revision INT NOT NULL DEFAULT 1, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_drafts_user (user_id,updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS auth_throttles (key_hash CHAR(64) NOT NULL PRIMARY KEY, attempts INT NOT NULL DEFAULT 1, window_started BIGINT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS user_avatars (user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,image_data MEDIUMTEXT NOT NULL,updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS email_budget_days (day_key CHAR(10) NOT NULL PRIMARY KEY) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS email_send_reservations (send_key VARCHAR(100) NOT NULL PRIMARY KEY,day_key CHAR(10) NOT NULL,channel VARCHAR(12) NOT NULL,recipient_count INT NOT NULL,status VARCHAR(16) NOT NULL DEFAULT 'reserved',created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,KEY idx_reservations_day (day_key,status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   ];
   // Existing deployments only need a cheap metadata check on a cold start.
   // Keep CREATE TABLE for fresh or partially initialized databases.
   const [existing] = await pool.query<RowDataPacket[]>(
-    "SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions','send_attempts','email_outbox','email_drafts','auth_throttles','user_avatars')) AS count,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='email_events' AND index_name='idx_events_message') AS event_index,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='messages' AND index_name='idx_messages_provider') AS provider_index"
+    "SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mailboxes','users','contacts','conversations','messages','campaigns','campaign_recipients','email_events','suppressions','send_attempts','email_outbox','email_drafts','auth_throttles','user_avatars','email_budget_days','email_send_reservations')) AS count,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='email_events' AND index_name='idx_events_message') AS event_index,(SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='messages' AND index_name='idx_messages_provider') AS provider_index"
   );
   if (Number(existing[0].count) !== statements.length) {
     for (const sql of statements) await pool.query(sql);
@@ -55,9 +57,16 @@ export async function rows(sql:string,args:(string|number|null)[]=[]):Promise<Ro
 export async function run(sql:string,args:(string|number|null)[]=[]):Promise<DbResult>{if(isDemo)return demoRun(sql,args);const [result]=await (await db()).execute<ResultSetHeader>(sql,args);return {lastInsertRowid:result.insertId,rowsAffected:result.affectedRows}}
 
 export async function transaction<T>(work: (session: DbSession) => Promise<T>): Promise<T> {
-  if (isDemo) return demoTransaction(work);
+  for(let attempt=0;;attempt++){
+    try{return isDemo?await demoTransaction(work):await mysqlTransaction(work);}
+    catch(error){const code=String((error as {code?:unknown}).code||"");if(attempt>=2||!["ER_LOCK_DEADLOCK","ER_LOCK_WAIT_TIMEOUT","SQLITE_BUSY"].includes(code))throw error;await new Promise(resolve=>setTimeout(resolve,30*(attempt+1)));}
+  }
+}
+async function mysqlTransaction<T>(work:(session:DbSession)=>Promise<T>):Promise<T>{
   const connection = await (await db()).getConnection();
   try {
+    // Budget checks run after acquiring the daily mutex and must see the latest committed sends.
+    await connection.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
     await connection.beginTransaction();
     const result = await work({
       rows: async (sql, args = []) => { const [result] = await connection.execute<RowDataPacket[]>(sql, args); return result as Row[]; },

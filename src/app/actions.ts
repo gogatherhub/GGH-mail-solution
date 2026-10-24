@@ -10,7 +10,9 @@ import { authenticate, logout, requireAdmin, requireUser } from "@/lib/auth";
 import { rows, run } from "@/lib/db";
 import { after } from "next/server";
 import { enqueueEmail, dispatchOutbox } from "@/lib/outbox";
-import { dispatchCampaignBatch } from "@/lib/campaign-dispatch";
+import { dispatchCampaignBatch,campaignReservationJoin } from "@/lib/campaign-dispatch";
+import { reserveCampaignSelection } from "@/lib/campaign-selection";
+import { SendBudgetError,preserveDeletedEmailBudget } from "@/lib/send-budget";
 
 const val = (form: FormData, key: string) => String(form.get(key) || "").trim();
 const selectedIds=(form:FormData)=>[...new Set(form.getAll("ids").map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))].slice(0,100);
@@ -86,21 +88,19 @@ export async function saveCampaign(form: FormData) {
   revalidatePath("/campaigns"); redirect("/campaigns?notice=campaign_saved");
 }
 
-export async function queueCampaign(form: FormData) {
-  const user = await requireAdmin();
-  const id = Number(val(form, "id"));
-  const campaign = (await rows("SELECT * FROM campaigns WHERE id=?", [id]))[0];
-  if (!campaign || campaign.status !== "draft" || (user.role !== "admin" && Number(user.assigned_mailbox_id) !== Number(campaign.mailbox_id))) throw new Error("Campaign unavailable");
-  await run(`INSERT IGNORE INTO campaign_recipients (campaign_id,contact_id) SELECT ?,c.id FROM contacts c LEFT JOIN suppressions s ON s.email=c.email WHERE c.kind=? AND c.consent=1 AND c.status='active' AND s.email IS NULL`, [id, String(campaign.segment)]);
-  const count = (await rows("SELECT COUNT(*) AS n FROM campaign_recipients WHERE campaign_id=?", [id]))[0];
-  if (!Number(count.n)) {
-    revalidatePath(`/campaigns/${id}`);
-    redirect(`/campaigns/${id}`);
-  }
-  await run("UPDATE campaigns SET status='queued' WHERE id=?", [id]);
-  revalidatePath("/campaigns"); redirect(`/campaigns/${id}`);
+function startCampaignWorker(id:number){
+  after(async()=>{
+    try{await dispatchCampaignBatch(id);}catch{console.error("Campaign worker interrupted; reserved recipients remain available for review.");}
+    for(const path of ["/campaigns",`/campaigns/${id}`,"/analytics","/dashboard","/contacts"])revalidatePath(path);
+  });
 }
-
+export async function queueCampaign(form:FormData){
+  await requireAdmin();const id=Number(val(form,"id"));
+  if(!Number.isSafeInteger(id)||id<1)return {error:"Campaign unavailable"};
+  try{await reserveCampaignSelection(id,Number(val(form,"send_count")),true);}
+  catch(error){if(error instanceof SendBudgetError)return {error:error.message};throw error;}
+  startCampaignWorker(id);revalidatePath("/campaigns");redirect(`/campaigns/${id}?notice=campaign_started`);
+}
 export async function pauseCampaign(form: FormData) {
   const user = await requireAdmin(); const id = Number(val(form, "id"));
   const campaign = (await rows("SELECT mailbox_id,status FROM campaigns WHERE id=?", [id]))[0];
@@ -111,13 +111,17 @@ export async function pauseCampaign(form: FormData) {
 
 export async function sendCampaignNow(form:FormData){
   await requireAdmin();const id=Number(val(form,"id"));
-  if(!Number.isSafeInteger(id)||id<1)throw new Error("Invalid campaign");
-  const campaign=(await rows("SELECT status FROM campaigns WHERE id=?",[id]))[0];
-  if(!campaign||campaign.status!=="queued")throw new Error("Campaign is not queued");
-  await dispatchCampaignBatch(id);
-  revalidatePath(`/campaigns/${id}`);revalidatePath("/campaigns");redirect(`/campaigns/${id}`);
+  if(!Number.isSafeInteger(id)||id<1)return {error:"Campaign unavailable"};
+  if(form.get("continue_reserved")){
+    const join=campaignReservationJoin;
+    const [pending]=await rows(`SELECT COUNT(*) n FROM campaign_recipients cr JOIN campaigns ca ON ca.id=cr.campaign_id JOIN email_send_reservations r ON ${join} WHERE ca.id=? AND ca.status='queued' AND cr.status='queued' AND r.status='reserved'`,[id]);
+    if(!Number(pending?.n||0))return {error:"No reserved recipients are waiting. Refresh the page."};
+  }else{
+    try{await reserveCampaignSelection(id,Number(val(form,"send_count")),false);}
+    catch(error){if(error instanceof SendBudgetError)return {error:error.message};throw error;}
+  }
+  startCampaignWorker(id);revalidatePath(`/campaigns/${id}`);redirect(`/campaigns/${id}?notice=campaign_started`);
 }
-
 export async function sendConversation(form: FormData) {
   const user = await requireUser();
   const mailboxId = Number(val(form, "mailbox_id"));
@@ -135,7 +139,9 @@ export async function sendConversation(form: FormData) {
   const draftId = val(form, "draft_id");
   if (draftId && draftId !== key) throw new Error("Draft request mismatch");
   const attachments = await Promise.all(files.map(async file => ({ filename: file.name.replace(/[^\w. -]/g,"_").slice(0,120), content: Buffer.from(await file.arrayBuffer()).toString("base64"), contentType: file.type || "application/octet-stream" })));
-  const queued = await enqueueEmail({ user, mailboxId, to, name: val(form,"name").slice(0,200), subject, body, cc: val(form,"cc"), bcc: val(form,"bcc"), conversationId: Number(val(form,"conversation_id")) || 0, key, draftId, attachments });
+  let queued:Awaited<ReturnType<typeof enqueueEmail>>;
+  try{queued = await enqueueEmail({ user, mailboxId, to, name: val(form,"name").slice(0,200), subject, body, cc: val(form,"cc"), bcc: val(form,"bcc"), conversationId: Number(val(form,"conversation_id")) || 0, key, draftId, attachments });}
+  catch(error){if(error instanceof SendBudgetError)return {error:error.message};throw error;}
   if (queued.jobId) after(async () => {
     try { await dispatchOutbox(queued.jobId); }
     catch { console.error("Outbox worker interrupted; queued email remains available for review."); }
@@ -159,6 +165,7 @@ export async function bulkConversations(form:FormData){
   if(!ids.length)redirect("/conversations");
   for(const id of ids){const c=(await rows("SELECT co.mailbox_id,(SELECT m.direction FROM messages m WHERE m.conversation_id=co.id ORDER BY m.id DESC LIMIT 1) last_direction FROM conversations co WHERE co.id=?",[id]))[0];if(!c||(user.role!=="admin"&&Number(user.assigned_mailbox_id)!==Number(c.mailbox_id)))continue;
     if(action==="delete"){
+      await preserveDeletedEmailBudget(id);
       await run("DELETE FROM email_events WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?)",[id]);
       await run("DELETE FROM send_attempts WHERE conversation_id=?",[id]);
       await run("DELETE FROM email_outbox WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?)",[id]);

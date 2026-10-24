@@ -11,10 +11,11 @@ import { SendButton } from "@/components/send-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { DraftFields } from "@/lib/drafts";
+import { SendingBudgetPanel } from "@/components/sending-budget";
 
 export function DraftComposer({ id, initial, revision: initialRevision = 0, mailboxes, reply = false }: { id: string; initial: DraftFields; revision?: number; mailboxes: { id: number; email: string }[]; reply?: boolean }) {
   const router = useRouter();
-  const [fields,setFields] = useState(initial), [status,setStatus] = useState(initialRevision?"Saved to drafts":"Draft saves automatically"), [saving,setSaving] = useState(false), [blocked,setBlocked] = useState(false);
+  const [fields,setFields] = useState(initial), [status,setStatus] = useState(initialRevision?"Saved to drafts":"Draft saves automatically"), [saving,setSaving] = useState(false), [blocked,setBlocked] = useState(false),[sendError,setSendError]=useState("");
   const revision = useRef(initialRevision), latest = useRef(initial), saved = useRef(JSON.stringify(initial)), inFlight = useRef<Promise<boolean>|null>(null), mounted = useRef(true), stopped = useRef(false), consumed = useRef(false), form = useRef<HTMLFormElement>(null);
   const save = useCallback(async function saveDraft(): Promise<boolean> {
     if (stopped.current) return false;
@@ -58,7 +59,8 @@ export function DraftComposer({ id, initial, revision: initialRevision = 0, mail
     document.addEventListener("keydown",shortcut); return ()=>document.removeEventListener("keydown",shortcut);
   },[]);
   async function keepDraft() { if (!revision.current) saved.current=""; if (await save()) { toast.success("Draft saved"); router.push("/drafts"); router.refresh(); } }
-  return <form ref={form} action={sendConversation} data-draft-blocked={blocked} className={reply?"stack":"card compose-card"}>
+  async function submit(formData:FormData){setSendError("");const result=await sendConversation(formData);if(result?.error)setSendError(result.error);}
+  return <><SendingBudgetPanel/><form ref={form} action={submit} data-draft-blocked={blocked} className={reply?"stack":"card compose-card"}>
     <input type="hidden" name="idempotency_key" value={id}/><input type="hidden" name="draft_id" value={id}/><input type="hidden" name="conversation_id" value={fields.conversation_id}/>
     {!reply&&<div className="card-head"><div><h2>Compose email</h2><p>Your draft is private and saves as you write.</p></div><SendButton disabled={blocked} className="button primary">Send</SendButton></div>}
     <div className={reply?"stack":"compose-fields"}>
@@ -73,7 +75,7 @@ export function DraftComposer({ id, initial, revision: initialRevision = 0, mail
       <div className={reply?"":"compose-editor"}><RichEditor key={id} initial={initial.body_html} placeholder={reply?"Write your reply...":"Write your message..."} onChange={value=>update("body_html",value)}/></div>
       <div className="draft-status" role="status">{saving?<Loader2 size={14} className="animate-spin"/>:status.includes("saved")?<Check size={14}/>:<CloudUpload size={14}/>}<span>{status}</span><Link href="/drafts">View drafts</Link></div>
       <label className="compose-attachment"><span>Attachments</span><input type="file" name="attachments" multiple/></label><p className="helper">Up to 5 files, 10 MB each, 20 MB total. Reattach files when reopening a draft.</p>
-      <div className="form-actions"><SendButton disabled={blocked} className="button primary">{reply?"Send reply":"Send email"}</SendButton><Button type="button" variant="outline" onClick={keepDraft} disabled={saving||blocked}><FileText size={15}/>Save draft</Button><span className="compose-shortcut">Ctrl / ⌘ + Enter to send</span></div>
+      {sendError&&<p className="form-error" role="alert">{sendError} Your message is still here.</p>}<div className="form-actions"><SendButton disabled={blocked} className="button primary">{reply?"Send reply":"Send email"}</SendButton><Button type="button" variant="outline" onClick={keepDraft} disabled={saving||blocked}><FileText size={15}/>Save draft</Button><span className="compose-shortcut">Ctrl / ⌘ + Enter to send</span></div>
     </div>
-  </form>;
+  </form></>;
 }

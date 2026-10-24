@@ -18,7 +18,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },
-  webServer: [{command:"node tests/fixtures/smtp-server.mjs",port:3101,reuseExistingServer:false,timeout:15000},{
+  webServer: [{command:"node tests/fixtures/smtp-server.mjs",port:3101,reuseExistingServer:false,timeout:15000},{command:"node tests/fixtures/resend-server.mjs",url:"http://127.0.0.1:3102/health",reuseExistingServer:false,timeout:15000},{
     command: "node node_modules/next/dist/bin/next start -p 3100",
     url: "http://localhost:3100/login",
     timeout: 60_000,
@@ -31,7 +31,8 @@ export default defineConfig({
       SESSION_SECRET: "ui-review-isolated-session-secret-123456789",
       TRACKING_SECRET: "ui-review-isolated-tracking-secret-123456789",
       APP_URL: "https://welfog.vercel.app",
-      RESEND_API_KEY: "",
+      RESEND_API_KEY: "re_isolated_ui_fixture",
+      RESEND_BASE_URL: "http://127.0.0.1:3102",
       AWS_REGION: "",
       SMTP_HOST: "127.0.0.1",
       SMTP_PORT: "3101",

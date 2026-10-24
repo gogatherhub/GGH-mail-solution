@@ -6,6 +6,20 @@ import { appOrigin } from "./app-url";
 
 export class MailRejectedError extends Error {}
 
+export function mailWasRejected(error:unknown){
+  const code=Number((error as {responseCode?:number}|null)?.responseCode);
+  return error instanceof MailRejectedError||(code>=400&&code<=599)||["MessageRejected","BadRequestException","MailFromDomainNotVerifiedException","AccountSuspendedException"].includes(error instanceof Error?error.name:"");
+}
+
+export async function sendCampaignMailBatch(items:{sender:string;to:string;subject:string;html:string;campaignId:number;recipientId:number}[],key:string){
+  if(!process.env.RESEND_API_KEY)throw new Error("Batch sending requires Resend");
+  const resend=new Resend(process.env.RESEND_API_KEY);
+  const {data,error}=await resend.batch.send(items.map(item=>({from:item.sender,to:item.to,subject:item.subject,html:item.html,headers:{"List-Unsubscribe":`<${appOrigin()}/unsubscribe/${item.recipientId}?sig=${signature(item.recipientId,"unsubscribe")}>`,"List-Unsubscribe-Post":"List-Unsubscribe=One-Click"},tags:[{name:"campaign_id",value:String(item.campaignId)},{name:"recipient_id",value:String(item.recipientId)}]})),{idempotencyKey:key});
+  if(error){if([400,401,403,404,422,429].includes(Number((error as {statusCode?:number}).statusCode)))throw new MailRejectedError("Resend rejected the batch");throw new Error("Batch acceptance was not confirmed");}
+  if(!data||data.data.length!==items.length||data.data.some(item=>!item.id))throw new Error("Batch acceptance was not confirmed");
+  return data.data.map(item=>item.id);
+}
+
 export async function sendMail(input: { from: string; to: string; subject: string; html: string; cc?: string; bcc?: string; campaignId?: number; recipientId?: number; idempotencyKey?: string; attachments?: { filename: string; content: Buffer; contentType: string }[] }) {
   const unsubscribe = input.recipientId ? `${appOrigin()}/unsubscribe/${input.recipientId}?sig=${signature(input.recipientId,"unsubscribe")}` : undefined;
   if(process.env.RESEND_API_KEY){

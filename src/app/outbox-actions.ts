@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { rows, transaction } from "@/lib/db";
 import { dispatchOutbox } from "@/lib/outbox";
+import { settleSend } from "@/lib/send-budget";
 
 async function accessibleJob(form: FormData) {
   const user = await requireUser(), id = Number(form.get("id"));
@@ -29,6 +30,7 @@ export async function cancelOutbox(form: FormData) {
   await transaction(async tx => {
     const changed = await tx.run("UPDATE email_outbox SET status='cancelled',last_error=NULL,payload_json='{}' WHERE id=? AND status IN ('queued','failed')", [Number(job.id)]);
     if (changed.rowsAffected) {
+      await settleSend(tx,`direct:${job.message_id}`,"released");
       await tx.run("UPDATE messages SET status='cancelled' WHERE id=?", [Number(job.message_id)]);
       await tx.run("UPDATE send_attempts SET status='cancelled' WHERE idempotency_key=?", [String(job.idempotency_key)]);
     }

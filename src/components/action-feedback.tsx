@@ -10,6 +10,7 @@ const notices: Record<string, string> = {
   contact_saved: "Contact saved",
   mailbox_saved: "Email account saved",
   campaign_saved: "Campaign draft saved",
+  campaign_started: "Selected recipients reserved. Your campaign is sending in the background.",
   profile_saved: "Profile updated",
   email_sent: "Email sent",
   email_queued: "Email queued. You can keep working while it sends.",
