@@ -27,5 +27,5 @@ export async function sendMail(input: { from: string; to: string; subject: strin
     const result = await transport.sendMail({ from: input.from, to: input.to, cc: input.cc, bcc: input.bcc, subject: input.subject, html: input.html, attachments: input.attachments, headers: unsubscribe ? { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined });
     return result.messageId as string;
   }
-  throw new Error("Configure AWS_REGION or SMTP settings before sending email");
+  throw new Error("Set RESEND_API_KEY before sending email");
 }
