@@ -178,7 +178,7 @@ export async function bulkConversations(form:FormData){
 }
 
 export async function deleteUser(form:FormData){const admin=await requireAdmin(),id=Number(val(form,"id"));if(id===Number(admin.id))throw new Error("You cannot delete your own account");await run("DELETE FROM users WHERE id=?",[id]);revalidatePath("/users");redirect("/users")}
-export async function deleteMailbox(form:FormData){await requireAdmin();const id=Number(val(form,"id"));const used=(await rows("SELECT (SELECT COUNT(*) FROM conversations WHERE mailbox_id=?) + (SELECT COUNT(*) FROM campaigns WHERE mailbox_id=?) + (SELECT COUNT(*) FROM users WHERE assigned_mailbox_id=?) AS n",[id,id,id]))[0];if(Number(used.n))throw new Error("This mailbox is in use; deactivate it instead");await run("DELETE FROM mailboxes WHERE id=?",[id]);revalidatePath("/email-accounts");redirect("/email-accounts")}
+export async function deleteMailbox(form:FormData){await requireAdmin();const id=Number(val(form,"id"));if(!Number.isSafeInteger(id)||id<1)redirect("/email-accounts");const used=(await rows("SELECT (SELECT COUNT(*) FROM conversations WHERE mailbox_id=?) + (SELECT COUNT(*) FROM campaigns WHERE mailbox_id=?) + (SELECT COUNT(*) FROM users WHERE assigned_mailbox_id=?) AS n",[id,id,id]))[0];if(Number(used.n))redirect(`/email-accounts/${id}?delete_notice=in_use`);await run("DELETE FROM mailboxes WHERE id=?",[id]);revalidatePath("/email-accounts");redirect("/email-accounts?notice=mailbox_deleted")}
 
 export async function bulkDeleteUsers(form:FormData){
   const admin=await requireAdmin(),ids=selectedIds(form);

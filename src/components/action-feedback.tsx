@@ -9,6 +9,7 @@ const notices: Record<string, string> = {
   user_updated: "Team member updated",
   contact_saved: "Contact saved",
   mailbox_saved: "Email account saved",
+  mailbox_deleted: "Email account deleted",
   campaign_saved: "Campaign draft saved",
   campaign_started: "Selected recipients reserved. Your campaign is sending in the background.",
   profile_saved: "Profile updated",
